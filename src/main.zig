@@ -1,19 +1,42 @@
 //! This is just for the actual Lox interpreter program. The actual interpreter is based in root.zig.
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("libzlox");
 
 pub fn main() !void {
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    var debug = std.heap.DebugAllocator(.{}){};
+    defer _ = debug.deinit();
+    const gpa = switch (builtin.mode) {
+        .Debug => debug.allocator(),
+        .ReleaseFast, .ReleaseSafe, .ReleaseSmall => std.heap.c_allocator,
+    };
 
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    var args = try std.process.argsWithAllocator(gpa);
+    defer args.deinit();
+    // first arg will be our program
+    _ = args.next();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    const stderr_file = std.io.getStdErr().writer();
+    var bw = std.io.bufferedWriter(stderr_file);
+    defer bw.flush() catch unreachable;
 
-    try bw.flush();
+    const stderr = bw.writer();
+
+    const operation = args.next() orelse return;
+
+    if (std.mem.eql(u8, operation, "tokenize")) {
+        const file = args.next() orelse {
+            _ = try stderr.write("No file provided!");
+            return;
+        };
+        try stderr.print("Tokenizing file {s}\n", .{file});
+    } else {
+        try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
+    }
+
+    try stderr.print("Run `zig build test` to run the tests.\n", .{});
 }
 
 test "simple test" {
