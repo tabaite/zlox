@@ -27,11 +27,24 @@ pub fn main() !void {
     const operation = args.next() orelse return;
 
     if (std.mem.eql(u8, operation, "tokenize")) {
-        const file = args.next() orelse {
+        const path = args.next() orelse {
             _ = try stderr.write("No file provided!");
             return;
         };
-        try stderr.print("Tokenizing file {s}\n", .{file});
+
+        try stderr.print("Tokenizing file {s}\n", .{path});
+
+        const contents = reading: {
+            const cwd = std.fs.cwd();
+            const file = try cwd.openFile(path, .{});
+            defer file.close();
+
+            const reader = file.reader();
+            break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
+        };
+        defer gpa.free(contents);
+
+        _ = try stderr.write(contents);
     } else {
         try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
     }
