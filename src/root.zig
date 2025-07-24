@@ -4,6 +4,8 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const SyntaxError = error{ UnterminatedString, UnexpectedCharacter };
+
 pub const TokenType = enum {
     // Invalid tokens can be handled however we want.
     // However, it is not really in the best interest
@@ -67,7 +69,7 @@ pub const TokenIterator = struct {
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
-    pub fn next(self: *TokenIterator) !?Token {
+    pub fn next(self: *TokenIterator) SyntaxError!?Token {
         for (self.position..self.source.len) |i| {
             const current = self.source[i];
             if (isAlpha(current)) {
@@ -95,7 +97,10 @@ pub const TokenIterator = struct {
                     self.position = if (cnext != '=') i + 1 else i + 2;
                     return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = self.source[i - 1 .. i] };
                 },
-                else => {},
+                else => {
+                    self.position = i + 1;
+                    return error.UnexpectedCharacter;
+                },
             }
         }
 

@@ -32,8 +32,6 @@ pub fn main() !void {
             return;
         };
 
-        try stderr.print("Tokenizing file {s}\n", .{path});
-
         const contents = reading: {
             const cwd = std.fs.cwd();
             const file = try cwd.openFile(path, .{});
@@ -46,7 +44,17 @@ pub fn main() !void {
 
         var iter = lib.TokenIterator.init(contents);
 
-        while (try iter.next()) |token| {
+        while (iter.next() catch |err| syn: {
+            switch (err) {
+                lib.SyntaxError.UnexpectedCharacter => {
+                    _ = try stderr.write("unexpected character (FIX THIS ERROR MESSAGE)\n");
+                },
+                lib.SyntaxError.UnterminatedString => {
+                    _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
+                },
+            }
+            break :syn lib.Token{ .token_type = .invalid, .source = undefined };
+        }) |token| {
             try printToken(token, stderr.any());
         }
     } else {
