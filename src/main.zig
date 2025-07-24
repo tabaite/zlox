@@ -46,9 +46,9 @@ pub fn main() !void {
 
         var iter = lib.TokenIterator.init(contents);
 
-        for (try iter.next()) |_| {}
-
-        _ = try stderr.write(contents);
+        while (try iter.next()) |token| {
+            try printToken(token, stderr.any());
+        }
     } else {
         try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
     }
@@ -57,7 +57,28 @@ pub fn main() !void {
 }
 
 fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
-    switch (token.token_type) {}
+    _ = switch (token.token_type) {
+        .bang => try out.write("BANG ! null\n"),
+        .bang_equal => try out.write("BANG_EQUAL != null\n"),
+        .less => try out.write("LESS < null\n"),
+        .less_equal => try out.write("LESS_EQUAL <= null\n"),
+        .greater => try out.write("GREATER > null\n"),
+        .greater_equal => try out.write("GREATER >= null\n"),
+        .equal => try out.write("EQUAL = null\n"),
+        .equal_equal => try out.write("EQUAL_EQUAL == null\n"),
+        .left_paren => try out.write("LEFT_PAREN ( null\n"),
+        .right_paren => try out.write("RIGHT_PAREN ) null\n"),
+        .left_brace => try out.write("LEFT_BRACE { null\n"),
+        .right_brace => try out.write("RIGHT_BRACE } null\n"),
+        .comma => try out.write("COMMA , null\n"),
+        .dot => try out.write("DOT . null\n"),
+        .minus => try out.write("MINUS - null\n"),
+        .plus => try out.write("PLUS + null\n"),
+        .semicolon => try out.write("SEMICOLON ; null\n"),
+        .star => try out.write("STAR * null\n"),
+        .slash => try out.write("SLASH / null\n"),
+        else => return,
+    };
 }
 
 test "simple test" {

@@ -68,46 +68,38 @@ pub const TokenIterator = struct {
         return .{ .source = source };
     }
     pub fn next(self: *TokenIterator) !?Token {
-        for (self.position..self.source.len, self.source) |i, c| {
-            if (isAlpha(c)) {
+        for (self.position..self.source.len) |i| {
+            const current = self.source[i];
+            if (isAlpha(current)) {
                 return null;
             }
-            if (isNumeric(c)) {
+            if (isNumeric(current)) {
                 return null;
             }
 
-            switch (c) {
+            const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
+            switch (current) {
                 '<' => {
-                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
-                        return .{ .token_type = .less, .source = self.source[i - 1 .. i] };
-                    } else {
-                        return .{ .token_type = .less_equal, .source = self.source[i - 1 .. i] };
-                    }
+                    self.position = if (cnext != '=') i + 1 else i + 2;
+                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = self.source[i - 1 .. i] };
                 },
                 '>' => {
-                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
-                        return .{ .token_type = .greater, .source = self.source[i - 1 .. i] };
-                    } else {
-                        return .{ .token_type = .greater_equal, .source = self.source[i - 1 .. i] };
-                    }
+                    self.position = if (cnext != '=') i + 1 else i + 2;
+                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = self.source[i - 1 .. i] };
                 },
                 '!' => {
-                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
-                        return .{ .token_type = .bang, .source = self.source[i - 1 .. i] };
-                    } else {
-                        return .{ .token_type = .bang_equal, .source = self.source[i - 1 .. i] };
-                    }
+                    self.position = if (cnext != '=') i + 1 else i + 2;
+                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = self.source[i - 1 .. i] };
                 },
                 '=' => {
-                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
-                        return .{ .token_type = .equal, .source = self.source[i - 1 .. i] };
-                    } else {
-                        return .{ .token_type = .equal_equal, .source = self.source[i - 1 .. i] };
-                    }
+                    self.position = if (cnext != '=') i + 1 else i + 2;
+                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = self.source[i - 1 .. i] };
                 },
                 else => {},
             }
         }
+
+        self.position = self.source.len;
         return null;
     }
 };
