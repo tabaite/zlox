@@ -44,10 +44,12 @@ pub fn main() !void {
 
         var iter = lib.TokenIterator.init(contents);
 
-        while (iter.next() catch |err| syn: {
+        var error_char: u8 = undefined;
+
+        while (iter.next(&error_char) catch |err| syn: {
             switch (err) {
                 lib.SyntaxError.UnexpectedCharacter => {
-                    _ = try stderr.write("unexpected character (FIX THIS ERROR MESSAGE)\n");
+                    _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
                 },
                 lib.SyntaxError.UnterminatedString => {
                     _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
@@ -60,8 +62,6 @@ pub fn main() !void {
     } else {
         try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
     }
-
-    try stderr.print("Run `zig build test` to run the tests.\n", .{});
 }
 
 fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {

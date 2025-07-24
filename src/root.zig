@@ -66,10 +66,13 @@ pub const Token = struct {
 pub const TokenIterator = struct {
     source: []u8,
     position: usize = 0,
+    line_number: usize = 1,
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
-    pub fn next(self: *TokenIterator) SyntaxError!?Token {
+
+    // I hate the usage of *unexpected_char, but whatever.
+    pub fn next(self: *TokenIterator, unexpected_char: *u8) SyntaxError!?Token {
         for (self.position..self.source.len) |i| {
             const current = self.source[i];
             if (isAlpha(current)) {
@@ -81,6 +84,9 @@ pub const TokenIterator = struct {
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
             switch (current) {
+                // windows bs (crlf)
+                '\r' => {},
+                '\n' => self.line_number += 1,
                 '<' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
                     return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = self.source[i - 1 .. i] };
@@ -99,6 +105,7 @@ pub const TokenIterator = struct {
                 },
                 else => {
                     self.position = i + 1;
+                    unexpected_char.* = current;
                     return error.UnexpectedCharacter;
                 },
             }
