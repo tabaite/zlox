@@ -85,8 +85,9 @@ pub const TokenIterator = struct {
                         return .{ .token_type = .identifier, .source = self.source[i..j] };
                     }
                 }
-                return null;
+                return .{ .token_type = .identifier, .source = self.source[i..self.source.len] };
             }
+
             if (isNumeric(current)) {
                 return null;
             }
