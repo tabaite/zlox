@@ -84,24 +84,68 @@ pub const TokenIterator = struct {
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
             switch (current) {
-                // windows bs (crlf)
-                '\r' => {},
+                // windows bs (crlf), whitespace
+                '\r', '\t', ' ' => {},
                 '\n' => self.line_number += 1,
+
+                // one character tokens
+                '(' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .left_paren, .source = self.source[i .. i + 1] };
+                },
+                ')' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .right_paren, .source = self.source[i .. i + 1] };
+                },
+                '{' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .left_brace, .source = self.source[i .. i + 1] };
+                },
+                '}' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .right_brace, .source = self.source[i .. i + 1] };
+                },
+                ',' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .comma, .source = self.source[i .. i + 1] };
+                },
+                '.' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .dot, .source = self.source[i .. i + 1] };
+                },
+                '-' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .minus, .source = self.source[i .. i + 1] };
+                },
+                '+' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .plus, .source = self.source[i .. i + 1] };
+                },
+                ';' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .semicolon, .source = self.source[i .. i + 1] };
+                },
+                '*' => {
+                    self.position = i + 1;
+                    return .{ .token_type = .star, .source = self.source[i .. i + 1] };
+                },
+
+                // one/two character tokens
                 '<' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = self.source[i - 1 .. i] };
+                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = self.source[i .. i + 1] };
                 },
                 '>' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = self.source[i - 1 .. i] };
+                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = self.source[i .. i + 1] };
                 },
                 '!' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = self.source[i - 1 .. i] };
+                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = self.source[i .. i + 1] };
                 },
                 '=' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = self.source[i - 1 .. i] };
+                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = self.source[i .. i + 1] };
                 },
                 else => {
                     self.position = i + 1;
