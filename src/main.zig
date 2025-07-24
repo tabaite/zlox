@@ -85,6 +85,11 @@ fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
         .semicolon => try out.write("SEMICOLON ; null\n"),
         .star => try out.write("STAR * null\n"),
         .slash => try out.write("SLASH / null\n"),
+
+        .string => {
+            const str = token.source orelse "";
+            try out.print("STRING \"{s}\" {s}\n", .{ str, str });
+        },
         else => return,
     };
 }

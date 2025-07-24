@@ -88,6 +88,21 @@ pub const TokenIterator = struct {
                 '\r', '\t', ' ' => {},
                 '\n' => self.line_number += 1,
 
+                // string literals
+                '"' => {
+                    for (i..self.source.len) |j| {
+                        const sscurrent = self.source[j];
+                        if (sscurrent == '\n') {
+                            self.line_number += 1;
+                        }
+                        if (sscurrent == '"') {
+                            self.position = j + 1;
+                            return .{ .token_type = .string, .source = self.source[i..j] };
+                        }
+                    }
+                    return error.UnterminatedString;
+                },
+
                 // one character tokens
                 '(' => {
                     self.position = i + 1;
