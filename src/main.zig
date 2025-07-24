@@ -88,6 +88,10 @@ fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
         .star => try out.write("STAR * null\n"),
         .slash => try out.write("SLASH / null\n"),
 
+        .number => {
+            const str = token.source orelse "";
+            try out.print("NUMBER {s} <NUMBER>", .{str});
+        },
         .string => {
             const str = token.source orelse "";
             try out.print("STRING \"{s}\" {s}\n", .{ str, str });
