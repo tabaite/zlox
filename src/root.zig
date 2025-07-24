@@ -4,6 +4,128 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const TokenType = enum {
+    // Invalid tokens can be handled however we want.
+    // However, it is not really in the best interest
+    // of the user to stop after only 1 invalid has been found.
+    end,
+    invalid,
+
+    left_paren,
+    right_paren,
+    left_brace,
+    right_brace,
+    comma,
+    dot,
+    minus,
+    plus,
+    semicolon,
+    slash,
+    star,
+
+    bang,
+    bang_equal,
+    equal,
+    equal_equal,
+    greater,
+    greater_equal,
+    less,
+    less_equal,
+
+    identifier,
+    string,
+    number,
+
+    kw_and,
+    kw_class,
+    kw_else,
+    kw_false,
+    kw_fun,
+    kw_for,
+    kw_if,
+    kw_nil,
+    kw_or,
+    kw_print,
+    kw_return,
+    kw_super,
+    kw_this,
+    kw_true,
+    kw_var,
+    kw_while,
+};
+
+pub const Token = struct {
+    token_type: TokenType,
+
+    // Subslice of the source buffer.
+    source: []u8,
+};
+
+pub const TokenIterator = struct {
+    source: []u8,
+    position: usize = 0,
+    pub fn init(source: []u8) TokenIterator {
+        return .{ .source = source };
+    }
+    pub fn next(self: *TokenIterator) !?Token {
+        for (self.position..self.source.len, self.source) |i, c| {
+            if (isAlpha(c)) {
+                return null;
+            }
+            if (isNumeric(c)) {
+                return null;
+            }
+
+            switch (c) {
+                '<' => {
+                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
+                        return .{ .token_type = .less, .source = self.source[i - 1 .. i] };
+                    } else {
+                        return .{ .token_type = .less_equal, .source = self.source[i - 1 .. i] };
+                    }
+                },
+                '>' => {
+                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
+                        return .{ .token_type = .greater, .source = self.source[i - 1 .. i] };
+                    } else {
+                        return .{ .token_type = .greater_equal, .source = self.source[i - 1 .. i] };
+                    }
+                },
+                '!' => {
+                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
+                        return .{ .token_type = .bang, .source = self.source[i - 1 .. i] };
+                    } else {
+                        return .{ .token_type = .bang_equal, .source = self.source[i - 1 .. i] };
+                    }
+                },
+                '=' => {
+                    if (i == self.source.len - 1 || (self.source[i + 1] != '=')) {
+                        return .{ .token_type = .equal, .source = self.source[i - 1 .. i] };
+                    } else {
+                        return .{ .token_type = .equal_equal, .source = self.source[i - 1 .. i] };
+                    }
+                },
+                else => {},
+            }
+        }
+        return null;
+    }
+};
+
+fn isAlpha(char: u8) bool {
+    return (char >= 'a' and char <= 'z') or
+        (char >= 'A' and char <= 'Z') or
+        char == '_';
+}
+
+fn isNumeric(char: u8) bool {
+    return (char >= '0' and char <= '9');
+}
+
+fn isAlphaNumeric(char: u8) bool {
+    return isAlpha(char) or isNumeric(char);
+}
+
 pub export fn add(a: i32, b: i32) i32 {
     return a + b;
 }

@@ -44,12 +44,20 @@ pub fn main() !void {
         };
         defer gpa.free(contents);
 
+        var iter = lib.TokenIterator.init(contents);
+
+        for (try iter.next()) |_| {}
+
         _ = try stderr.write(contents);
     } else {
         try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
     }
 
     try stderr.print("Run `zig build test` to run the tests.\n", .{});
+}
+
+fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
+    switch (token.token_type) {}
 }
 
 test "simple test" {
