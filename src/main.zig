@@ -92,6 +92,10 @@ fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
             const str = token.source orelse "";
             try out.print("STRING \"{s}\" {s}\n", .{ str, str });
         },
+        .identifier => {
+            const str = token.source orelse "";
+            try out.print("IDENTIFIER {s} null\n", .{str});
+        },
         else => return,
     };
 }

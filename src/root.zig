@@ -78,6 +78,13 @@ pub const TokenIterator = struct {
         while (i < self.source.len) {
             const current = self.source[i];
             if (isAlpha(current)) {
+                for (i..self.source.len) |j| {
+                    const icurrent = self.source[j];
+                    if (!isAlphaNumeric(icurrent)) {
+                        self.position = j;
+                        return .{ .token_type = .identifier, .source = self.source[i..j] };
+                    }
+                }
                 return null;
             }
             if (isNumeric(current)) {
