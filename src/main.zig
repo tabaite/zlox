@@ -59,6 +59,8 @@ pub fn main() !void {
         }) |token| {
             try printToken(token, stderr.any());
         }
+
+        _ = try stderr.write("EOF  null\n");
     } else {
         try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
     }

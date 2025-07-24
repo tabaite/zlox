@@ -73,7 +73,9 @@ pub const TokenIterator = struct {
 
     // I hate the usage of *unexpected_char, but whatever.
     pub fn next(self: *TokenIterator, unexpected_char: *u8) SyntaxError!?Token {
-        for (self.position..self.source.len) |i| {
+        var i = self.position;
+
+        while (i < self.source.len) {
             const current = self.source[i];
             if (isAlpha(current)) {
                 return null;
@@ -88,16 +90,31 @@ pub const TokenIterator = struct {
                 '\r', '\t', ' ' => {},
                 '\n' => self.line_number += 1,
 
+                // slash or comments
+                '/' => if (cnext == '/') {
+                    for (i..self.source.len) |j| {
+                        const sscurrent = self.source[j];
+                        if (sscurrent == '\n') {
+                            i = j;
+                            break;
+                        }
+                    }
+                } else {
+                    self.position = i + 1;
+                    return .{ .token_type = .slash, .source = null };
+                },
+
                 // string literals
                 '"' => {
-                    for (i..self.source.len) |j| {
+                    const start = if (i + 1 > self.source.len) self.source.len else i + 1;
+                    for (start..self.source.len) |j| {
                         const sscurrent = self.source[j];
                         if (sscurrent == '\n') {
                             self.line_number += 1;
                         }
                         if (sscurrent == '"') {
                             self.position = j + 1;
-                            return .{ .token_type = .string, .source = self.source[i..j] };
+                            return .{ .token_type = .string, .source = self.source[start..j] };
                         }
                     }
                     return error.UnterminatedString;
@@ -168,6 +185,8 @@ pub const TokenIterator = struct {
                     return error.UnexpectedCharacter;
                 },
             }
+
+            i += 1;
         }
 
         self.position = self.source.len;
