@@ -59,8 +59,8 @@ pub const TokenType = enum {
 pub const Token = struct {
     token_type: TokenType,
 
-    // Subslice of the source buffer.
-    source: []u8,
+    // Subslice of the source buffer. no, the nullable slice does NOT affect the size
+    source: ?[]u8,
 };
 
 pub const TokenIterator = struct {
@@ -91,61 +91,61 @@ pub const TokenIterator = struct {
                 // one character tokens
                 '(' => {
                     self.position = i + 1;
-                    return .{ .token_type = .left_paren, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .left_paren, .source = null };
                 },
                 ')' => {
                     self.position = i + 1;
-                    return .{ .token_type = .right_paren, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .right_paren, .source = null };
                 },
                 '{' => {
                     self.position = i + 1;
-                    return .{ .token_type = .left_brace, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .left_brace, .source = null };
                 },
                 '}' => {
                     self.position = i + 1;
-                    return .{ .token_type = .right_brace, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .right_brace, .source = null };
                 },
                 ',' => {
                     self.position = i + 1;
-                    return .{ .token_type = .comma, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .comma, .source = null };
                 },
                 '.' => {
                     self.position = i + 1;
-                    return .{ .token_type = .dot, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .dot, .source = null };
                 },
                 '-' => {
                     self.position = i + 1;
-                    return .{ .token_type = .minus, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .minus, .source = null };
                 },
                 '+' => {
                     self.position = i + 1;
-                    return .{ .token_type = .plus, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .plus, .source = null };
                 },
                 ';' => {
                     self.position = i + 1;
-                    return .{ .token_type = .semicolon, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .semicolon, .source = null };
                 },
                 '*' => {
                     self.position = i + 1;
-                    return .{ .token_type = .star, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = .star, .source = null };
                 },
 
                 // one/two character tokens
                 '<' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = null };
                 },
                 '>' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = null };
                 },
                 '!' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = null };
                 },
                 '=' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = self.source[i .. i + 1] };
+                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = null };
                 },
                 else => {
                     self.position = i + 1;
