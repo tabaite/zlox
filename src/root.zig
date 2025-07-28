@@ -56,6 +56,25 @@ pub const TokenType = enum {
     kw_while,
 };
 
+pub const keywordMap = std.StaticStringMap(TokenType).initComptime(.{
+    .{ "and", .kw_and },
+    .{ "class", .kw_class },
+    .{ "else", .kw_else },
+    .{ "false", .kw_false },
+    .{ "fun", .kw_fun },
+    .{ "for", .kw_for },
+    .{ "if", .kw_if },
+    .{ "nil", .kw_nil },
+    .{ "or", .kw_or },
+    .{ "print", .kw_print },
+    .{ "return", .kw_return },
+    .{ "super", .kw_super },
+    .{ "this", .kw_this },
+    .{ "true", .kw_true },
+    .{ "var", .kw_var },
+    .{ "while", .kw_while },
+});
+
 pub const Token = struct {
     token_type: TokenType,
 
@@ -82,10 +101,16 @@ pub const TokenIterator = struct {
                     const icurrent = self.source[j];
                     if (!isAlphaNumeric(icurrent)) {
                         self.position = j;
-                        return .{ .token_type = .identifier, .source = self.source[i..j] };
+                        const kwLookup = keywordMap.get(self.source[i..j]);
+                        const idenType = kwLookup orelse .identifier;
+                        const source = if (kwLookup == null) self.source[i..j] else null;
+                        return .{ .token_type = idenType, .source = source };
                     }
                 }
-                return .{ .token_type = .identifier, .source = self.source[i..self.source.len] };
+                const kwLookup = keywordMap.get(self.source[i..self.source.len]);
+                const idenType = kwLookup orelse .identifier;
+                const source = if (kwLookup == null) self.source[i..self.source.len] else null;
+                return .{ .token_type = idenType, .source = source };
             }
 
             if (isNumeric(current)) {

@@ -88,6 +88,23 @@ fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
         .star => try out.write("STAR * null\n"),
         .slash => try out.write("SLASH / null\n"),
 
+        .kw_and => try out.write("AND and null\n"),
+        .kw_class => try out.write("CLASS class null\n"),
+        .kw_else => try out.write("ELSE else null\n"),
+        .kw_false => try out.write("FALSE false null\n"),
+        .kw_fun => try out.write("FUN fun null\n"),
+        .kw_for => try out.write("FOR for null\n"),
+        .kw_if => try out.write("IF if null\n"),
+        .kw_nil => try out.write("NIL nil null\n"),
+        .kw_or => try out.write("OR or null\n"),
+        .kw_print => try out.write("PRINT print null\n"),
+        .kw_return => try out.write("RETURN return null\n"),
+        .kw_super => try out.write("SUPER super null\n"),
+        .kw_this => try out.write("THIS this null\n"),
+        .kw_true => try out.write("TRUE true null\n"),
+        .kw_var => try out.write("VAR var null\n"),
+        .kw_while => try out.write("WHILE while null\n"),
+
         .number => {
             const str = token.source orelse "";
             try out.print("NUMBER {s} <NUMBER>", .{str});
