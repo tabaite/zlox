@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("libzlox");
+const scanning = lib.scanning;
 
 pub fn main() !void {
     var debug = std.heap.DebugAllocator(.{}){};
@@ -42,20 +43,20 @@ pub fn main() !void {
         };
         defer gpa.free(contents);
 
-        var iter = lib.TokenIterator.init(contents);
+        var iter = scanning.TokenIterator.init(contents);
 
         var error_char: u8 = undefined;
 
         while (iter.next(&error_char) catch |err| syn: {
             switch (err) {
-                lib.SyntaxError.UnexpectedCharacter => {
+                scanning.SyntaxError.UnexpectedCharacter => {
                     _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
                 },
-                lib.SyntaxError.UnterminatedString => {
+                scanning.SyntaxError.UnterminatedString => {
                     _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
                 },
             }
-            break :syn lib.Token{ .token_type = .invalid, .source = undefined };
+            break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
         }) |token| {
             try printToken(token, stderr.any());
         }
@@ -66,7 +67,7 @@ pub fn main() !void {
     }
 }
 
-fn printToken(token: lib.Token, out: std.io.AnyWriter) !void {
+fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
     _ = switch (token.token_type) {
         .bang => try out.write("BANG ! null\n"),
         .bang_equal => try out.write("BANG_EQUAL != null\n"),
