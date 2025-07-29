@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const Expression = union(enum) {
     literal: union(enum) {
-        number: f32,
+        number: f64,
         string: []u8,
         true,
         false,
