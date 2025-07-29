@@ -116,19 +116,19 @@ pub const TokenIterator = struct {
                     const icurrent = self.source[j];
                     if (icurrent == '.') {
                         if (seenDecimal) {
-                            return .{ .token_type = .identifier, .source = self.source[i..j] };
+                            return .{ .token_type = .number, .source = self.source[i..j] };
                         }
                         if ((j + 1 >= self.source.len) or !isNumeric(self.source[j + 1])) {
                             self.position = j;
-                            return .{ .token_type = .identifier, .source = self.source[i..j] };
+                            return .{ .token_type = .number, .source = self.source[i..j] };
                         }
                         seenDecimal = true;
                     } else if (!isNumeric(icurrent)) {
                         self.position = j;
-                        return .{ .token_type = .identifier, .source = self.source[i..j] };
+                        return .{ .token_type = .number, .source = self.source[i..j] };
                     }
                 }
-                return .{ .token_type = .identifier, .source = self.source[i..self.source.len] };
+                return .{ .token_type = .number, .source = self.source[i..self.source.len] };
             }
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];

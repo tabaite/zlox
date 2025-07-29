@@ -108,7 +108,7 @@ fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
 
         .number => {
             const str = token.source orelse "";
-            try out.print("NUMBER {s} <NUMBER>", .{str});
+            try out.print("NUMBER {s} <NUMBER>\n", .{str});
         },
         .string => {
             const str = token.source orelse "";
