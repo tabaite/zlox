@@ -36,20 +36,20 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
             .string => |str| try out.print("{s}", .{str}),
-            .true => try out.write("true"),
-            .false => try out.write("false"),
-            .nil => try out.write("nil"),
+            .true => _ = try out.write("true"),
+            .false => _ = try out.write("false"),
+            .nil => _ = try out.write("nil"),
         },
         .unary => |u| {
-            switch (u.operation) {
+            _ = switch (u.operation) {
                 .negate => try out.write("(- "),
                 .negateBool => try out.write("(! "),
-            }
+            };
             try printExpression(u.expr, out);
-            try out.write(")");
+            _ = try out.write(")");
         },
         .binary => |b| {
-            switch (b.operation) {
+            _ = switch (b.operation) {
                 .equality => try out.write("(== "),
                 .notEquality => try out.write("(!= "),
                 .greater => try out.write("(> "),
@@ -60,15 +60,16 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
                 .subtract => try out.write("(- "),
                 .multiply => try out.write("(* "),
                 .divide => try out.write("(/ "),
-            }
+            };
             try printExpression(b.left, out);
+            _ = try out.write(" ");
             try printExpression(b.right, out);
-            try out.write(")");
+            _ = try out.write(")");
         },
         .grouping => |g| {
-            try out.write("(group ");
+            _ = try out.write("(group ");
             try printExpression(g.expr, out);
-            try out.write(")");
+            _ = try out.write(")");
         },
     }
 }

@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
 const lib = @import("libzlox");
 const scanning = lib.scanning;
+const parsing = lib.parsing;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -39,10 +40,7 @@ pub fn main() !void {
     const operation = functionMap.get(args.next() orelse "") orelse .unknown;
 
     switch (operation) {
-        .parse => {
-            _ = try stderr.write("parsing coming soon to a zlox near you\n");
-        },
-        .tokenize => {
+        .tokenize, .parse => {
             const path = args.next() orelse {
                 _ = try stderr.write("No file provided!");
                 return;
@@ -58,25 +56,48 @@ pub fn main() !void {
             };
             defer gpa.free(contents);
 
-            var iter = scanning.TokenIterator.init(contents);
+            switch (operation) {
+                .tokenize => {
+                    var iter = scanning.TokenIterator.init(contents);
 
-            var error_char: u8 = undefined;
+                    var error_char: u8 = undefined;
 
-            while (iter.next(&error_char) catch |err| syn: {
-                switch (err) {
-                    scanning.SyntaxError.UnexpectedCharacter => {
-                        _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
-                    },
-                    scanning.SyntaxError.UnterminatedString => {
-                        _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
-                    },
-                }
-                break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
-            }) |token| {
-                try printToken(token, stderr.any());
+                    while (iter.next(&error_char) catch |err| syn: {
+                        switch (err) {
+                            scanning.SyntaxError.UnexpectedCharacter => {
+                                _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
+                            },
+                            scanning.SyntaxError.UnterminatedString => {
+                                _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
+                            },
+                        }
+                        break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
+                    }) |token| {
+                        try printToken(token, stderr.any());
+                    }
+
+                    _ = try stderr.write("EOF  null\n");
+                },
+                .parse => {
+                    const exampleTree = parsing.Expression{
+                        .binary = .{
+                            .operation = .add,
+                            .left = @constCast(&parsing.Expression{ .literal = .{ .number = 123.34 } }),
+                            .right = @constCast(&parsing.Expression{
+                                .unary = .{
+                                    .operation = .negate,
+                                    .expr = @constCast(&parsing.Expression{
+                                        .literal = .nil,
+                                    }),
+                                },
+                            }),
+                        },
+                    };
+                    _ = try stderr.write("note: this is NOT the parsed form of the file, just a testing tree\n");
+                    try parsing.printExpression(@constCast(&exampleTree), stderr.any());
+                },
+                .unknown => {},
             }
-
-            _ = try stderr.write("EOF  null\n");
         },
         .unknown => {
             try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
