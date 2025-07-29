@@ -6,6 +6,17 @@ const builtin = @import("builtin");
 const lib = @import("libzlox");
 const scanning = lib.scanning;
 
+pub const ProgramFunction = enum {
+    unknown,
+    tokenize,
+    parse,
+};
+
+pub const functionMap = std.StaticStringMap(ProgramFunction).initComptime(.{
+    .{ "tokenize", .tokenize },
+    .{ "parse", .parse },
+});
+
 pub fn main() !void {
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
@@ -25,45 +36,51 @@ pub fn main() !void {
 
     const stderr = bw.writer();
 
-    const operation = args.next() orelse return;
+    const operation = functionMap.get(args.next() orelse "") orelse .unknown;
 
-    if (std.mem.eql(u8, operation, "tokenize")) {
-        const path = args.next() orelse {
-            _ = try stderr.write("No file provided!");
-            return;
-        };
+    switch (operation) {
+        .parse => {
+            _ = try stderr.write("parsing coming soon to a zlox near you\n");
+        },
+        .tokenize => {
+            const path = args.next() orelse {
+                _ = try stderr.write("No file provided!");
+                return;
+            };
 
-        const contents = reading: {
-            const cwd = std.fs.cwd();
-            const file = try cwd.openFile(path, .{});
-            defer file.close();
+            const contents = reading: {
+                const cwd = std.fs.cwd();
+                const file = try cwd.openFile(path, .{});
+                defer file.close();
 
-            const reader = file.reader();
-            break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
-        };
-        defer gpa.free(contents);
+                const reader = file.reader();
+                break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
+            };
+            defer gpa.free(contents);
 
-        var iter = scanning.TokenIterator.init(contents);
+            var iter = scanning.TokenIterator.init(contents);
 
-        var error_char: u8 = undefined;
+            var error_char: u8 = undefined;
 
-        while (iter.next(&error_char) catch |err| syn: {
-            switch (err) {
-                scanning.SyntaxError.UnexpectedCharacter => {
-                    _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
-                },
-                scanning.SyntaxError.UnterminatedString => {
-                    _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
-                },
+            while (iter.next(&error_char) catch |err| syn: {
+                switch (err) {
+                    scanning.SyntaxError.UnexpectedCharacter => {
+                        _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
+                    },
+                    scanning.SyntaxError.UnterminatedString => {
+                        _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
+                    },
+                }
+                break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
+            }) |token| {
+                try printToken(token, stderr.any());
             }
-            break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
-        }) |token| {
-            try printToken(token, stderr.any());
-        }
 
-        _ = try stderr.write("EOF  null\n");
-    } else {
-        try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
+            _ = try stderr.write("EOF  null\n");
+        },
+        .unknown => {
+            try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
+        },
     }
 }
 

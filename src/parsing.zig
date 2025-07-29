@@ -9,21 +9,21 @@ pub const Expression = union(enum) {
         nil,
     },
     unary: struct {
-        operation: enum { Negate, NegateBool },
+        operation: enum { negate, negateBool },
         expr: *Expression,
     },
     binary: struct {
         operation: enum {
-            Equality,
-            NotEquality,
-            Greater,
-            GreaterEqual,
-            Less,
-            LessEqual,
-            Add,
-            Subtract,
-            Multiply,
-            Divide,
+            equality,
+            notEquality,
+            greater,
+            greaterEqual,
+            less,
+            lessEqual,
+            add,
+            subtract,
+            multiply,
+            divide,
         },
         left: *Expression,
         right: *Expression,
@@ -42,24 +42,24 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
         },
         .unary => |u| {
             switch (u.operation) {
-                .Negate => try out.write("(- "),
-                .NegateBool => try out.write("(! "),
+                .negate => try out.write("(- "),
+                .negateBool => try out.write("(! "),
             }
             try printExpression(u.expr, out);
             try out.write(")");
         },
         .binary => |b| {
             switch (b.operation) {
-                .Equality => try out.write("(== "),
-                .NotEquality => try out.write("(!= "),
-                .Greater => try out.write("(> "),
-                .GreaterEqual => try out.write("(>= "),
-                .Less => try out.write("(< "),
-                .LessEqual => try out.write("(<= "),
-                .Add => try out.write("(+ "),
-                .Subtract => try out.write("(- "),
-                .Multiply => try out.write("(* "),
-                .Divide => try out.write("(/ "),
+                .equality => try out.write("(== "),
+                .notEquality => try out.write("(!= "),
+                .greater => try out.write("(> "),
+                .greaterEqual => try out.write("(>= "),
+                .less => try out.write("(< "),
+                .lessEqual => try out.write("(<= "),
+                .add => try out.write("(+ "),
+                .subtract => try out.write("(- "),
+                .multiply => try out.write("(* "),
+                .divide => try out.write("(/ "),
             }
             try printExpression(b.left, out);
             try printExpression(b.right, out);
