@@ -65,13 +65,13 @@ pub fn main() !void {
                     while (iter.next(&error_char) catch |err| syn: {
                         switch (err) {
                             scanning.SyntaxError.UnexpectedCharacter => {
-                                _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.line_number, error_char });
+                                _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.lineNumber, error_char });
                             },
                             scanning.SyntaxError.UnterminatedString => {
                                 _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
                             },
                         }
-                        break :syn scanning.Token{ .token_type = .invalid, .source = undefined };
+                        break :syn scanning.Token{ .tokenType = .invalid, .source = undefined };
                     }) |token| {
                         try printToken(token, stderr.any());
                     }
@@ -106,19 +106,19 @@ pub fn main() !void {
 }
 
 fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
-    _ = switch (token.token_type) {
+    _ = switch (token.tokenType) {
         .bang => try out.write("BANG ! null\n"),
-        .bang_equal => try out.write("BANG_EQUAL != null\n"),
+        .bangEqual => try out.write("BANG_EQUAL != null\n"),
         .less => try out.write("LESS < null\n"),
-        .less_equal => try out.write("LESS_EQUAL <= null\n"),
+        .lessEqual => try out.write("LESS_EQUAL <= null\n"),
         .greater => try out.write("GREATER > null\n"),
-        .greater_equal => try out.write("GREATER >= null\n"),
+        .greaterEqual => try out.write("GREATER >= null\n"),
         .equal => try out.write("EQUAL = null\n"),
-        .equal_equal => try out.write("EQUAL_EQUAL == null\n"),
-        .left_paren => try out.write("LEFT_PAREN ( null\n"),
-        .right_paren => try out.write("RIGHT_PAREN ) null\n"),
-        .left_brace => try out.write("LEFT_BRACE { null\n"),
-        .right_brace => try out.write("RIGHT_BRACE } null\n"),
+        .equalEqual => try out.write("EQUAL_EQUAL == null\n"),
+        .leftParen => try out.write("LEFT_PAREN ( null\n"),
+        .rightParen => try out.write("RIGHT_PAREN ) null\n"),
+        .leftBrace => try out.write("LEFT_BRACE { null\n"),
+        .rightBrace => try out.write("RIGHT_BRACE } null\n"),
         .comma => try out.write("COMMA , null\n"),
         .dot => try out.write("DOT . null\n"),
         .minus => try out.write("MINUS - null\n"),
@@ -127,22 +127,22 @@ fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
         .star => try out.write("STAR * null\n"),
         .slash => try out.write("SLASH / null\n"),
 
-        .kw_and => try out.write("AND and null\n"),
-        .kw_class => try out.write("CLASS class null\n"),
-        .kw_else => try out.write("ELSE else null\n"),
-        .kw_false => try out.write("FALSE false null\n"),
-        .kw_fun => try out.write("FUN fun null\n"),
-        .kw_for => try out.write("FOR for null\n"),
-        .kw_if => try out.write("IF if null\n"),
-        .kw_nil => try out.write("NIL nil null\n"),
-        .kw_or => try out.write("OR or null\n"),
-        .kw_print => try out.write("PRINT print null\n"),
-        .kw_return => try out.write("RETURN return null\n"),
-        .kw_super => try out.write("SUPER super null\n"),
-        .kw_this => try out.write("THIS this null\n"),
-        .kw_true => try out.write("TRUE true null\n"),
-        .kw_var => try out.write("VAR var null\n"),
-        .kw_while => try out.write("WHILE while null\n"),
+        .kwAnd => try out.write("AND and null\n"),
+        .kwClass => try out.write("CLASS class null\n"),
+        .kwElse => try out.write("ELSE else null\n"),
+        .kwFalse => try out.write("FALSE false null\n"),
+        .kwFun => try out.write("FUN fun null\n"),
+        .kwFor => try out.write("FOR for null\n"),
+        .kwIf => try out.write("IF if null\n"),
+        .kwNil => try out.write("NIL nil null\n"),
+        .kwOr => try out.write("OR or null\n"),
+        .kwPrint => try out.write("PRINT print null\n"),
+        .kwReturn => try out.write("RETURN return null\n"),
+        .kwSuper => try out.write("SUPER super null\n"),
+        .kwThis => try out.write("THIS this null\n"),
+        .kwTrue => try out.write("TRUE true null\n"),
+        .kwVar => try out.write("VAR var null\n"),
+        .kwWhile => try out.write("WHILE while null\n"),
 
         .number => {
             const str = token.source orelse "";

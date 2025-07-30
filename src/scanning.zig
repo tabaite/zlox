@@ -10,10 +10,10 @@ pub const TokenType = enum {
     end,
     invalid,
 
-    left_paren,
-    right_paren,
-    left_brace,
-    right_brace,
+    leftParen,
+    rightParen,
+    leftBrace,
+    rightBrace,
     comma,
     dot,
     minus,
@@ -23,57 +23,57 @@ pub const TokenType = enum {
     star,
 
     bang,
-    bang_equal,
+    bangEqual,
     equal,
-    equal_equal,
+    equalEqual,
     greater,
-    greater_equal,
+    greaterEqual,
     less,
-    less_equal,
+    lessEqual,
 
     identifier,
     string,
     number,
 
-    kw_and,
-    kw_class,
-    kw_else,
-    kw_false,
-    kw_fun,
-    kw_for,
-    kw_if,
-    kw_nil,
-    kw_or,
-    kw_print,
-    kw_return,
-    kw_super,
-    kw_this,
-    kw_true,
-    kw_var,
-    kw_while,
+    kwAnd,
+    kwClass,
+    kwElse,
+    kwFalse,
+    kwFun,
+    kwFor,
+    kwIf,
+    kwNil,
+    kwOr,
+    kwPrint,
+    kwReturn,
+    kwSuper,
+    kwThis,
+    kwTrue,
+    kwVar,
+    kwWhile,
 };
 
 pub const keywordMap = std.StaticStringMap(TokenType).initComptime(.{
-    .{ "and", .kw_and },
-    .{ "class", .kw_class },
-    .{ "else", .kw_else },
-    .{ "false", .kw_false },
-    .{ "fun", .kw_fun },
-    .{ "for", .kw_for },
-    .{ "if", .kw_if },
-    .{ "nil", .kw_nil },
-    .{ "or", .kw_or },
-    .{ "print", .kw_print },
-    .{ "return", .kw_return },
-    .{ "super", .kw_super },
-    .{ "this", .kw_this },
-    .{ "true", .kw_true },
-    .{ "var", .kw_var },
-    .{ "while", .kw_while },
+    .{ "and", .kwAnd },
+    .{ "class", .kwClass },
+    .{ "else", .kwElse },
+    .{ "false", .kwFalse },
+    .{ "fun", .kwFun },
+    .{ "for", .kwFor },
+    .{ "if", .kwIf },
+    .{ "nil", .kwNil },
+    .{ "or", .kwOr },
+    .{ "print", .kwPrint },
+    .{ "return", .kwReturn },
+    .{ "super", .kwSuper },
+    .{ "this", .kwThis },
+    .{ "true", .kwTrue },
+    .{ "var", .kwVar },
+    .{ "while", .kwWhile },
 });
 
 pub const Token = struct {
-    token_type: TokenType,
+    tokenType: TokenType,
 
     // Subslice of the source buffer. no, the nullable slice does NOT affect the size
     source: ?[]u8,
@@ -82,7 +82,7 @@ pub const Token = struct {
 pub const TokenIterator = struct {
     source: []u8,
     position: usize = 0,
-    line_number: usize = 1,
+    lineNumber: usize = 1,
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
@@ -101,13 +101,13 @@ pub const TokenIterator = struct {
                         const kwLookup = keywordMap.get(self.source[i..j]);
                         const idenType = kwLookup orelse .identifier;
                         const source = if (kwLookup == null) self.source[i..j] else null;
-                        return .{ .token_type = idenType, .source = source };
+                        return .{ .tokenType = idenType, .source = source };
                     }
                 }
                 const kwLookup = keywordMap.get(self.source[i..self.source.len]);
                 const idenType = kwLookup orelse .identifier;
                 const source = if (kwLookup == null) self.source[i..self.source.len] else null;
-                return .{ .token_type = idenType, .source = source };
+                return .{ .tokenType = idenType, .source = source };
             }
 
             if (isNumeric(current)) {
@@ -116,26 +116,26 @@ pub const TokenIterator = struct {
                     const icurrent = self.source[j];
                     if (icurrent == '.') {
                         if (seenDecimal) {
-                            return .{ .token_type = .number, .source = self.source[i..j] };
+                            return .{ .tokenType = .number, .source = self.source[i..j] };
                         }
                         if ((j + 1 >= self.source.len) or !isNumeric(self.source[j + 1])) {
                             self.position = j;
-                            return .{ .token_type = .number, .source = self.source[i..j] };
+                            return .{ .tokenType = .number, .source = self.source[i..j] };
                         }
                         seenDecimal = true;
                     } else if (!isNumeric(icurrent)) {
                         self.position = j;
-                        return .{ .token_type = .number, .source = self.source[i..j] };
+                        return .{ .tokenType = .number, .source = self.source[i..j] };
                     }
                 }
-                return .{ .token_type = .number, .source = self.source[i..self.source.len] };
+                return .{ .tokenType = .number, .source = self.source[i..self.source.len] };
             }
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
             switch (current) {
                 // windows bs (crlf), whitespace
                 '\r', '\t', ' ' => {},
-                '\n' => self.line_number += 1,
+                '\n' => self.lineNumber += 1,
 
                 // slash or comments
                 '/' => if (cnext == '/') {
@@ -148,7 +148,7 @@ pub const TokenIterator = struct {
                     }
                 } else {
                     self.position = i + 1;
-                    return .{ .token_type = .slash, .source = null };
+                    return .{ .tokenType = .slash, .source = null };
                 },
 
                 // string literals
@@ -157,11 +157,11 @@ pub const TokenIterator = struct {
                     for (start..self.source.len) |j| {
                         const sscurrent = self.source[j];
                         if (sscurrent == '\n') {
-                            self.line_number += 1;
+                            self.lineNumber += 1;
                         }
                         if (sscurrent == '"') {
                             self.position = j + 1;
-                            return .{ .token_type = .string, .source = self.source[start..j] };
+                            return .{ .tokenType = .string, .source = self.source[start..j] };
                         }
                     }
                     return error.UnterminatedString;
@@ -170,61 +170,61 @@ pub const TokenIterator = struct {
                 // one character tokens
                 '(' => {
                     self.position = i + 1;
-                    return .{ .token_type = .left_paren, .source = null };
+                    return .{ .tokenType = .leftParen, .source = null };
                 },
                 ')' => {
                     self.position = i + 1;
-                    return .{ .token_type = .right_paren, .source = null };
+                    return .{ .tokenType = .rightParen, .source = null };
                 },
                 '{' => {
                     self.position = i + 1;
-                    return .{ .token_type = .left_brace, .source = null };
+                    return .{ .tokenType = .leftBrace, .source = null };
                 },
                 '}' => {
                     self.position = i + 1;
-                    return .{ .token_type = .right_brace, .source = null };
+                    return .{ .tokenType = .rightBrace, .source = null };
                 },
                 ',' => {
                     self.position = i + 1;
-                    return .{ .token_type = .comma, .source = null };
+                    return .{ .tokenType = .comma, .source = null };
                 },
                 '.' => {
                     self.position = i + 1;
-                    return .{ .token_type = .dot, .source = null };
+                    return .{ .tokenType = .dot, .source = null };
                 },
                 '-' => {
                     self.position = i + 1;
-                    return .{ .token_type = .minus, .source = null };
+                    return .{ .tokenType = .minus, .source = null };
                 },
                 '+' => {
                     self.position = i + 1;
-                    return .{ .token_type = .plus, .source = null };
+                    return .{ .tokenType = .plus, .source = null };
                 },
                 ';' => {
                     self.position = i + 1;
-                    return .{ .token_type = .semicolon, .source = null };
+                    return .{ .tokenType = .semicolon, .source = null };
                 },
                 '*' => {
                     self.position = i + 1;
-                    return .{ .token_type = .star, .source = null };
+                    return .{ .tokenType = .star, .source = null };
                 },
 
                 // one/two character tokens
                 '<' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .less else .less_equal, .source = null };
+                    return .{ .tokenType = if (cnext != '=') .less else .lessEqual, .source = null };
                 },
                 '>' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .greater else .greater_equal, .source = null };
+                    return .{ .tokenType = if (cnext != '=') .greater else .greaterEqual, .source = null };
                 },
                 '!' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .bang else .bang_equal, .source = null };
+                    return .{ .tokenType = if (cnext != '=') .bang else .bangEqual, .source = null };
                 },
                 '=' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .token_type = if (cnext != '=') .equal else .equal_equal, .source = null };
+                    return .{ .tokenType = if (cnext != '=') .equal else .equalEqual, .source = null };
                 },
                 else => {
                     self.position = i + 1;
