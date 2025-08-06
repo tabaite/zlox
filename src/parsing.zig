@@ -12,6 +12,28 @@ const std = @import("std");
 // primary        → NUMBER | STRING | "true" | "false" | "nil"
 //                | "(" expression ")" ;
 
+pub const ParsingError = error{
+    UnexpectedToken,
+};
+
+pub const BinaryExprType = enum {
+    equality,
+    notEquality,
+    greater,
+    greaterEqual,
+    less,
+    lessEqual,
+    add,
+    subtract,
+    multiply,
+    divide,
+};
+
+pub const UnaryExprType = enum {
+    negate,
+    negateBool,
+};
+
 pub const Expression = union(enum) {
     literal: union(enum) {
         number: f64,
@@ -21,35 +43,29 @@ pub const Expression = union(enum) {
         nil,
     },
     unary: struct {
-        operation: enum { negate, negateBool },
+        operation: UnaryExprType,
         expr: *Expression,
     },
     binary: struct {
-        operation: enum {
-            equality,
-            notEquality,
-            greater,
-            greaterEqual,
-            less,
-            lessEqual,
-            add,
-            subtract,
-            multiply,
-            divide,
-        },
+        operation: BinaryExprType,
         left: *Expression,
         right: *Expression,
     },
     grouping: struct { expr: *Expression },
 };
 
-fn matchToken(target: scanning.TokenType, matches: []const scanning.TokenType) bool {
+const TokenToBinaryExpr = struct {
+    key: scanning.TokenType,
+    value: BinaryExprType,
+};
+
+fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBinaryExpr) ?BinaryExprType {
     for (matches) |t| {
-        if (t == target) {
-            return true;
+        if (t.key == target) {
+            return t.value;
         }
     }
-    return false;
+    return null;
 }
 
 pub const AstParser = struct {
@@ -61,10 +77,10 @@ pub const AstParser = struct {
     }
 
     // Recursive descent parser helpers.
-    fn next(self: *AstParser) ?scanning.TokenType {
+    fn next(self: *AstParser) ?scanning.Token {
         if (self.position < self.tokens.len) {
             self.position += 1;
-            return self.tokens[self.position].tokenType;
+            return self.tokens[self.position];
         } else {
             return null;
         }
@@ -75,30 +91,75 @@ pub const AstParser = struct {
     // The function mutates the state of the parser, moving the position forward
     // to the token immediately after the expression it returns.
 
+    // Returns the root of the AST.
+    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        return try self.expressionRule(allocator);
+    }
+
     fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         return try self.equalityRule(allocator);
     }
-    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const expression = try self.comparisonRule(allocator);
+
+    // it's funny the only thing that can fail here (previousRule is meant to be another call to binaryRule)
+    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) anyerror!*Expression) !*Expression {
+        const expression = try previousRule(&self, allocator);
 
         while (self.next()) |token| {
-            if (!matchToken(token, .{ .bangEqual, .equalEqual })) {
-                break;
-            }
+            const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
 
-            const right = try self.comparsionRule(allocator);
+            const right = try previousRule(&self, allocator);
 
             const newRoot = try allocator.create(Expression);
-            newRoot.binary = .{ .left = expression, .right = right, .operation = switch (token) {
-                .bang_equal => .notEquality,
-                .equal_equal => .equality,
-                else => .equality,
-            } };
-        }
 
-        return expression;
+            newRoot.binary = .{ .left = expression, .right = right, .operation = operation };
+        }
     }
-    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {}
+    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        return self.binaryRule(allocator, .{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } }, AstParser.comparisonRule);
+    }
+    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        return self.binaryRule(allocator, .{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } }, AstParser.comparisonRule);
+    }
+    fn termRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        return self.binaryRule(allocator, .{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } }, AstParser.comparisonRule);
+    }
+    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        return self.binaryRule(allocator, .{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } }, AstParser.comparisonRule);
+    }
+    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const opToken = self.tokens[self.position];
+
+        const operation = switch (opToken.tokenType) {
+            .bang => .negate,
+            .minus => .negateBool,
+            else => return try self.primaryRule(allocator),
+        };
+
+        const right = try self.unaryRule(allocator);
+
+        const newRoot = try allocator.create(Expression);
+        newRoot.unary = .{ .operation = operation, .expr = right };
+    }
+    fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const token = self.tokens[self.position];
+
+        const primary = try allocator.create(Expression);
+        primary.* = lit: switch (token.tokenType) {
+            .number => {
+                const literal = Expression{ .literal = .{ .number = 0.5 } };
+                break :lit literal;
+            },
+            .string => {
+                const literal = Expression{ .literal = .{ .string = token.source orelse unreachable } };
+                break :lit literal;
+            },
+            .kwNil => break :lit Expression{ .literal = .nil },
+            .kwTrue => break :lit Expression{ .literal = .true },
+            .kwFalse => break :lit Expression{ .literal = .false },
+            // todo: expressions in parethesis
+            else => return error.UnexpectedToken,
+        };
+    }
 };
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
