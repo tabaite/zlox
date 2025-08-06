@@ -56,48 +56,46 @@ pub fn main() !void {
             };
             defer gpa.free(contents);
 
-            switch (operation) {
-                .tokenize => {
-                    var iter = scanning.TokenIterator.init(contents);
+            var iter = scanning.TokenIterator.init(contents);
 
-                    var error_char: u8 = undefined;
+            var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
+            defer tokens.deinit();
 
-                    while (iter.next(&error_char) catch |err| syn: {
-                        switch (err) {
-                            scanning.SyntaxError.UnexpectedCharacter => {
-                                _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.lineNumber, error_char });
-                            },
-                            scanning.SyntaxError.UnterminatedString => {
-                                _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
-                            },
-                        }
-                        break :syn scanning.Token{ .tokenType = .invalid, .source = undefined };
-                    }) |token| {
-                        try printToken(token, stderr.any());
-                    }
+            var error_char: u8 = undefined;
 
-                    _ = try stderr.write("EOF  null\n");
-                },
-                .parse => {
-                    const exampleTree = parsing.Expression{
-                        .binary = .{
-                            .operation = .add,
-                            .left = @constCast(&parsing.Expression{ .literal = .{ .number = 123.34 } }),
-                            .right = @constCast(&parsing.Expression{
-                                .unary = .{
-                                    .operation = .negate,
-                                    .expr = @constCast(&parsing.Expression{
-                                        .literal = .nil,
-                                    }),
-                                },
-                            }),
-                        },
-                    };
-                    _ = try stderr.write("note: this is NOT the parsed form of the file, just a testing tree\n");
-                    try parsing.printExpression(@constCast(&exampleTree), stderr.any());
-                },
-                .unknown => {},
+            while (iter.next(&error_char) catch |err| syn: {
+                switch (err) {
+                    scanning.SyntaxError.UnexpectedCharacter => {
+                        _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.lineNumber, error_char });
+                    },
+                    scanning.SyntaxError.UnterminatedString => {
+                        _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
+                    },
+                }
+                break :syn scanning.Token{ .tokenType = .invalid, .source = undefined };
+            }) |token| {
+                try tokens.append(token);
             }
+
+            if (operation == .tokenize) {
+                for (tokens.items) |t| {
+                    try printToken(t, stderr.any());
+                }
+                try printToken(.{ .tokenType = .end, .source = null }, stderr.any());
+                return;
+            }
+
+            // an expression can never be less than 1 token
+            const astBuf = try gpa.alloc(parsing.Expression, tokens.items.len);
+            defer gpa.free(astBuf);
+
+            var fba = std.heap.FixedBufferAllocator.init(std.mem.sliceAsBytes(astBuf));
+            const astAlloc = fba.allocator();
+
+            var astParser = parsing.AstParser.new(tokens.items);
+            const astRoot = try astParser.parse(astAlloc);
+            _ = try stderr.write("note: this is NOT the parsed form of the file, just a testing tree\n");
+            try parsing.printExpression(astRoot, stderr.any());
         },
         .unknown => {
             try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
@@ -143,6 +141,8 @@ fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
         .kwTrue => try out.write("TRUE true null\n"),
         .kwVar => try out.write("VAR var null\n"),
         .kwWhile => try out.write("WHILE while null\n"),
+
+        .end => try out.write("EOF  null\n"),
 
         .number => {
             const str = token.source orelse "";

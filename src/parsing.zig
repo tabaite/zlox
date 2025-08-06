@@ -73,7 +73,7 @@ pub const AstParser = struct {
     position: usize,
 
     pub fn new(tokens: []scanning.Token) AstParser {
-        return .{ .tokens = tokens };
+        return .{ .tokens = tokens, .position = 0 };
     }
 
     // Recursive descent parser helpers.
@@ -101,35 +101,39 @@ pub const AstParser = struct {
     }
 
     // it's funny the only thing that can fail here (previousRule is meant to be another call to binaryRule)
-    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) anyerror!*Expression) !*Expression {
-        const expression = try previousRule(&self, allocator);
+    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) anyerror!*Expression) !*Expression {
+        var expression = try previousRule(self, allocator);
 
         while (self.next()) |token| {
             const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
 
-            const right = try previousRule(&self, allocator);
+            const right = try previousRule(self, allocator);
 
             const newRoot = try allocator.create(Expression);
 
             newRoot.binary = .{ .left = expression, .right = right, .operation = operation };
+
+            expression = newRoot;
         }
+
+        return expression;
     }
     fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, .{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } }, AstParser.comparisonRule);
+        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } }, AstParser.comparisonRule);
     }
     fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, .{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } }, AstParser.comparisonRule);
+        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } }, AstParser.termRule);
     }
     fn termRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, .{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } }, AstParser.comparisonRule);
+        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } }, AstParser.factorRule);
     }
     fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, .{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } }, AstParser.comparisonRule);
+        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } }, AstParser.unaryRule);
     }
     fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const opToken = self.tokens[self.position];
 
-        const operation = switch (opToken.tokenType) {
+        const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negate,
             .minus => .negateBool,
             else => return try self.primaryRule(allocator),
@@ -139,6 +143,8 @@ pub const AstParser = struct {
 
         const newRoot = try allocator.create(Expression);
         newRoot.unary = .{ .operation = operation, .expr = right };
+
+        return newRoot;
     }
     fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const token = self.tokens[self.position];
@@ -159,6 +165,7 @@ pub const AstParser = struct {
             // todo: expressions in parethesis
             else => return error.UnexpectedToken,
         };
+        return primary;
     }
 };
 
