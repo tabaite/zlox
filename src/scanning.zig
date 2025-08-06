@@ -128,6 +128,7 @@ pub const TokenIterator = struct {
                         return .{ .tokenType = .number, .source = self.source[i..j] };
                     }
                 }
+                self.position = self.source.len;
                 return .{ .tokenType = .number, .source = self.source[i..self.source.len] };
             }
 
