@@ -77,13 +77,14 @@ pub fn main() !void {
                 try tokens.append(token);
             }
 
+            for (tokens.items) |t| {
+                try printToken(t, stderr.any());
+            }
             if (operation == .tokenize) {
-                for (tokens.items) |t| {
-                    try printToken(t, stderr.any());
-                }
                 try printToken(.{ .tokenType = .end, .source = null }, stderr.any());
                 return;
             }
+            try stderr.writeByte('\n');
 
             // an expression can never be less than 1 token
             const astBuf = try gpa.alloc(parsing.Expression, tokens.items.len);

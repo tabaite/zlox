@@ -76,14 +76,17 @@ pub const AstParser = struct {
         return .{ .tokens = tokens, .position = 0 };
     }
 
-    // Recursive descent parser helpers.
-    fn next(self: *AstParser) ?scanning.Token {
-        if (self.position < self.tokens.len) {
-            self.position += 1;
+    // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
+    fn tryPeek(self: *AstParser) ?scanning.Token {
+        if (self.position < self.tokens.len - 1) {
             return self.tokens[self.position];
         } else {
             return null;
         }
+    }
+
+    fn advance(self: *AstParser) void {
+        self.position += 1;
     }
 
     // The way this AST parser works is somewhat simple.
@@ -92,62 +95,85 @@ pub const AstParser = struct {
     // to the token immediately after the expression it returns.
 
     // Returns the root of the AST.
-    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         return try self.expressionRule(allocator);
     }
 
-    fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         return try self.equalityRule(allocator);
     }
 
-    // it's funny the only thing that can fail here (previousRule is meant to be another call to binaryRule)
-    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) anyerror!*Expression) !*Expression {
+    // might be the most atrocious function body i've ever written
+    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression) (std.mem.Allocator.Error || ParsingError)!*Expression {
         var expression = try previousRule(self, allocator);
-
-        while (self.next()) |token| {
+        while (self.tryPeek()) |token| {
             const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
+
+            self.advance();
 
             const right = try previousRule(self, allocator);
 
             const newRoot = try allocator.create(Expression);
 
-            newRoot.binary = .{ .left = expression, .right = right, .operation = operation };
+            newRoot.* = Expression{ .binary = .{ .left = expression, .right = right, .operation = operation } };
 
             expression = newRoot;
         }
-
         return expression;
     }
-    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } }, AstParser.comparisonRule);
+
+    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
+        return self.binaryRule(allocator, matches, comparisonRule);
     }
-    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } }, AstParser.termRule);
+    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
+        return self.binaryRule(allocator, matches, termRule);
     }
-    fn termRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } }, AstParser.factorRule);
+    fn termRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
+        return self.binaryRule(allocator, matches, factorRule);
     }
-    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return self.binaryRule(allocator, &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } }, AstParser.unaryRule);
+    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } };
+        return self.binaryRule(allocator, matches, unaryRule);
     }
-    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         const opToken = self.tokens[self.position];
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
-            .bang => .negate,
-            .minus => .negateBool,
+            .bang => .negateBool,
+            .minus => .negate,
             else => return try self.primaryRule(allocator),
         };
+
+        self.advance();
 
         const right = try self.unaryRule(allocator);
 
         const newRoot = try allocator.create(Expression);
-        newRoot.unary = .{ .operation = operation, .expr = right };
+        newRoot.* = Expression{ .unary = .{ .operation = operation, .expr = right } };
 
         return newRoot;
     }
-    fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         const token = self.tokens[self.position];
+        self.advance();
+
+        if (token.tokenType == .leftParen) {
+            const expr = try self.expressionRule(allocator);
+
+            // the token will be the token following expr
+            const current = self.tokens[self.position];
+            if (current.tokenType != .rightParen) {
+                return error.UnexpectedToken;
+            } else {
+                const group = try allocator.create(Expression);
+                group.* = Expression{ .grouping = .{ .expr = expr } };
+                self.advance();
+                return group;
+            }
+        }
 
         const primary = try allocator.create(Expression);
         primary.* = lit: switch (token.tokenType) {
