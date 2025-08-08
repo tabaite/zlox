@@ -178,7 +178,7 @@ pub const AstParser = struct {
         const primary = try allocator.create(Expression);
         primary.* = lit: switch (token.tokenType) {
             .number => {
-                const literal = Expression{ .literal = .{ .number = 0.5 } };
+                const literal = Expression{ .literal = .{ .number = std.fmt.parseFloat(f64, token.source orelse "0") catch 0 } };
                 break :lit literal;
             },
             .string => {
