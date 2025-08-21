@@ -95,11 +95,11 @@ pub const AstParser = struct {
     // to the token immediately after the expression it returns.
 
     // Returns the root of the AST.
-    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         return try self.expressionRule(allocator);
     }
 
-    fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         return try self.equalityRule(allocator);
     }
 
@@ -122,23 +122,23 @@ pub const AstParser = struct {
         return expression;
     }
 
-    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
         return self.binaryRule(allocator, matches, comparisonRule);
     }
-    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
         return self.binaryRule(allocator, matches, termRule);
     }
-    fn termRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn termRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
         return self.binaryRule(allocator, matches, factorRule);
     }
-    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } };
         return self.binaryRule(allocator, matches, unaryRule);
     }
-    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const opToken = self.tokens[self.position];
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
