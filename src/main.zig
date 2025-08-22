@@ -61,16 +61,11 @@ pub fn main() !void {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
             defer tokens.deinit();
 
-            while (iter.next() catch |err| syn: {
-                switch (err) {
-                    scanning.SyntaxError.UnterminatedString => {
-                        _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
-                    },
-                }
-                break :syn scanning.Token{ .tokenType = .invalid, .source = "" };
-            }) |token| {
+            while (iter.next()) |token| {
                 if (token.tokenType == .invalidChar) {
                     try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, token.source orelse "NULL???" });
+                } else if (token.tokenType == .unterminatedString) {
+                    _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
                 } else {
                     try tokens.append(token);
                 }
@@ -80,7 +75,7 @@ pub fn main() !void {
                 try printToken(t, stderr.any());
             }
             if (operation == .tokenize) {
-                try printToken(.{ .tokenType = .end, .source = null }, stderr.any());
+                _ = try stderr.write("EOF  null\n");
                 return;
             }
             try stderr.writeByte('\n');
@@ -141,8 +136,6 @@ fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
         .kwTrue => try out.write("TRUE true null\n"),
         .kwVar => try out.write("VAR var null\n"),
         .kwWhile => try out.write("WHILE while null\n"),
-
-        .end => try out.write("EOF  null\n"),
 
         .number => {
             const str = token.source orelse "";

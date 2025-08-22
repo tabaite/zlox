@@ -1,13 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const SyntaxError = error{UnterminatedString};
-
 pub const TokenType = enum {
     // Invalid tokens can be handled however we want.
     // However, it is not really in the best interest
     // of the user to stop after only 1 invalid has been found.
-    invalid,
+
+    unterminatedString,
     invalidChar,
 
     leftParen,
@@ -90,7 +89,7 @@ pub const TokenIterator = struct {
     // I hate the usage of *unexpected_char, but whatever.
     // TODO: Remove unexpected_char. Information about the scanning errors (unexpected, unterminated string)
     // should be manually recovered, if desirable.
-    pub fn next(self: *TokenIterator) SyntaxError!?Token {
+    pub fn next(self: *TokenIterator) ?Token {
         var i = self.position;
 
         while (i < self.source.len) {
@@ -145,6 +144,7 @@ pub const TokenIterator = struct {
                     for (i..self.source.len) |j| {
                         const sscurrent = self.source[j];
                         if (sscurrent == '\n') {
+                            self.lineNumber += 1;
                             i = j;
                             break;
                         }
@@ -167,7 +167,7 @@ pub const TokenIterator = struct {
                             return .{ .tokenType = .string, .source = self.source[start..j] };
                         }
                     }
-                    return error.UnterminatedString;
+                    return .{ .tokenType = .unterminatedString, .source = self.source[start..self.source.len] };
                 },
 
                 // one character tokens
