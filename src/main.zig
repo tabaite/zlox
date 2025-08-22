@@ -61,20 +61,19 @@ pub fn main() !void {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
             defer tokens.deinit();
 
-            var error_char: u8 = undefined;
-
-            while (iter.next(&error_char) catch |err| syn: {
+            while (iter.next() catch |err| syn: {
                 switch (err) {
-                    scanning.SyntaxError.UnexpectedCharacter => {
-                        _ = try stderr.print("[line {d}] Error: Unexpected character: {c}\n", .{ iter.lineNumber, error_char });
-                    },
                     scanning.SyntaxError.UnterminatedString => {
                         _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
                     },
                 }
-                break :syn scanning.Token{ .tokenType = .invalid, .source = undefined };
+                break :syn scanning.Token{ .tokenType = .invalid, .source = "" };
             }) |token| {
-                try tokens.append(token);
+                if (token.tokenType == .invalidChar) {
+                    try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, token.source orelse "NULL???" });
+                } else {
+                    try tokens.append(token);
+                }
             }
 
             for (tokens.items) |t| {
