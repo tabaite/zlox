@@ -39,25 +39,25 @@ pub fn main() !void {
 
     const operation = functionMap.get(args.next() orelse "") orelse .unknown;
 
+    const path = args.next() orelse {
+        _ = try stderr.write("No file provided!");
+        return;
+    };
+
+    const contents = reading: {
+        const cwd = std.fs.cwd();
+        const file = try cwd.openFile(path, .{});
+        defer file.close();
+
+        const reader = file.reader();
+        break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
+    };
+    defer gpa.free(contents);
+
+    var iter = scanning.TokenIterator.init(contents);
+
     switch (operation) {
-        .tokenize, .parse => {
-            const path = args.next() orelse {
-                _ = try stderr.write("No file provided!");
-                return;
-            };
-
-            const contents = reading: {
-                const cwd = std.fs.cwd();
-                const file = try cwd.openFile(path, .{});
-                defer file.close();
-
-                const reader = file.reader();
-                break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
-            };
-            defer gpa.free(contents);
-
-            var iter = scanning.TokenIterator.init(contents);
-
+        .tokenize => {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
             defer tokens.deinit();
 
@@ -74,20 +74,15 @@ pub fn main() !void {
             for (tokens.items) |t| {
                 try printToken(t, stderr.any());
             }
-            if (operation == .tokenize) {
-                _ = try stderr.write("EOF  null\n");
-                return;
-            }
-            try stderr.writeByte('\n');
-
+            _ = try stderr.write("EOF  null\n");
+        },
+        .parse => {
             // an expression can never be less than 1 token
-            const astBuf = try gpa.alloc(parsing.Expression, tokens.items.len);
-            defer gpa.free(astBuf);
+            var arena = std.heap.ArenaAllocator.init(gpa);
+            defer arena.deinit();
+            const astAlloc = arena.allocator();
 
-            var fba = std.heap.FixedBufferAllocator.init(std.mem.sliceAsBytes(astBuf));
-            const astAlloc = fba.allocator();
-
-            var astParser = parsing.AstParser.new(tokens.items);
+            var astParser = parsing.AstParser.new(&iter);
             const astRoot = try astParser.parse(astAlloc);
             _ = try stderr.write("note: this is NOT the parsed form of the file, just a testing tree\n");
             try parsing.printExpression(astRoot, stderr.any());

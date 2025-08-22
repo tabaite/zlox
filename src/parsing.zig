@@ -14,6 +14,7 @@ const std = @import("std");
 
 pub const ParsingError = error{
     UnexpectedToken,
+    ExpectedToken,
 };
 
 pub const BinaryExprType = enum {
@@ -69,24 +70,20 @@ fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBi
 }
 
 pub const AstParser = struct {
-    tokens: []scanning.Token,
-    position: usize,
+    iter: *scanning.TokenIterator,
+    lastToken: ?scanning.Token,
 
-    pub fn new(tokens: []scanning.Token) AstParser {
-        return .{ .tokens = tokens, .position = 0 };
+    pub fn new(iter: *scanning.TokenIterator) AstParser {
+        return .{ .iter = iter, .lastToken = iter.next() };
     }
 
     // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
     fn tryPeek(self: *AstParser) ?scanning.Token {
-        if (self.position < self.tokens.len - 1) {
-            return self.tokens[self.position];
-        } else {
-            return null;
-        }
+        return self.lastToken;
     }
 
     fn advance(self: *AstParser) void {
-        self.position += 1;
+        self.lastToken = self.iter.next();
     }
 
     // The way this AST parser works is somewhat simple.
@@ -139,7 +136,7 @@ pub const AstParser = struct {
         return self.binaryRule(allocator, matches, unaryRule);
     }
     fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const opToken = self.tokens[self.position];
+        const opToken = self.tryPeek() orelse return error.ExpectedToken;
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
@@ -157,14 +154,14 @@ pub const AstParser = struct {
         return newRoot;
     }
     fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
-        const token = self.tokens[self.position];
+        const token = self.tryPeek() orelse return error.ExpectedToken;
         self.advance();
 
         if (token.tokenType == .leftParen) {
             const expr = try self.expressionRule(allocator);
 
             // the token will be the token following expr
-            const current = self.tokens[self.position];
+            const current = self.tryPeek() orelse return error.ExpectedToken;
             if (current.tokenType != .rightParen) {
                 return error.UnexpectedToken;
             } else {
