@@ -1,20 +1,23 @@
 const scanning = @import("scanning.zig");
 const std = @import("std");
 
-// TODO: implement better grammar from 6.1
-// expression     → equality ;
-// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-// term           → factor ( ( "-" | "+" ) factor )* ;
-// factor         → unary ( ( "/" | "*" ) unary )* ;
+// program        → ( statement )* EOF
+// statement      → ( expression | call ) ";"
+// call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
+// expression     → equality
+// equality       → comparison ( ( "!=" | "==" ) comparison )*
+// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )*
+// term           → factor ( ( "-" | "+" ) factor )*
+// factor         → unary ( ( "/" | "*" ) unary )*
 // unary          → ( "!" | "-" ) unary
-//                | primary ;
+//                | primary
 // primary        → NUMBER | STRING | "true" | "false" | "nil"
-//                | "(" expression ")" ;
+//                | "(" expression ")"
 
 pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
+    ExpectedSemicolon,
 };
 
 pub const BinaryExprType = enum {
@@ -41,6 +44,11 @@ pub const Literal = union(enum) {
     true,
     false,
     nil,
+};
+
+pub const Statement = struct {
+    expr: *Expression,
+    next: ?*Statement,
 };
 
 pub const Expression = union(enum) {
@@ -94,8 +102,32 @@ pub const AstParser = struct {
     // to the token immediately after the expression it returns.
 
     // Returns the root of the AST.
-    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return try self.expressionRule(allocator);
+    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
+        return try self.programRule(allocator);
+    }
+
+    fn programRule(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
+        const root = try self.statementRule(allocator);
+        var currentStatement = root;
+        while (self.tryPeek()) |_| {
+            const newStatement = try self.statementRule(allocator);
+            currentStatement.next = newStatement;
+
+            currentStatement = newStatement;
+        }
+        return root;
+    }
+
+    fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
+        const expression = try self.expressionRule(allocator);
+        const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+        if (end.tokenType != .semicolon) {
+            return ParsingError.ExpectedSemicolon;
+        }
+        const statement = try allocator.create(Statement);
+        statement.* = .{ .expr = expression, .next = null };
+        self.advance();
+        return statement;
     }
 
     fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
@@ -193,6 +225,16 @@ pub const AstParser = struct {
         return primary;
     }
 };
+
+pub fn printStatements(stmt: *Statement, out: std.io.AnyWriter) !void {
+    var current: ?*Statement = stmt;
+    while (current != null) {
+        const actual = current orelse unreachable;
+        try printExpression(actual.expr, out);
+        _ = try out.write("\n");
+        current = actual.next;
+    }
+}
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
     switch (expr.*) {

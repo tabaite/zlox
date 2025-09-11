@@ -87,7 +87,7 @@ pub fn main() !void {
 
             var astParser = parsing.AstParser.new(&iter);
             const astRoot = try astParser.parse(astAlloc);
-            try parsing.printExpression(astRoot, stderr.any());
+            try parsing.printStatements(astRoot, stderr.any());
         },
         .evaluate => {
             var arena = std.heap.ArenaAllocator.init(gpa);
@@ -97,11 +97,12 @@ pub fn main() !void {
             var astParser = parsing.AstParser.new(&iter);
             const astRoot = try astParser.parse(astAlloc);
 
-            try parsing.printExpression(astRoot, stderr.any());
+            try parsing.printStatements(astRoot, stderr.any());
 
             _ = try stderr.write("\nevaluating:\n");
 
-            var evaluator = evaluation.Evaluator.init(astRoot);
+            // TODO: fix this hack
+            var evaluator = evaluation.Evaluator.init(astRoot.expr);
             const finalResult = evaluator.evaluate(astAlloc) catch |err| e: {
                 const EvaluationError = evaluation.EvaluationError;
                 if (err == EvaluationError.IncompatibleTypesForOperands) {
