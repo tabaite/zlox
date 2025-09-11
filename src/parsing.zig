@@ -198,7 +198,7 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
     switch (expr.*) {
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
-            .string => |str| try out.print("{s}", .{str}),
+            .string => |str| try out.print("\"{s}\"", .{str}),
             .true => _ = try out.write("true"),
             .false => _ = try out.write("false"),
             .nil => _ = try out.write("nil"),

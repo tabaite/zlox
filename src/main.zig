@@ -99,9 +99,18 @@ pub fn main() !void {
 
             try parsing.printExpression(astRoot, stderr.any());
 
-            _ = try stderr.write("evaluating:\n");
+            _ = try stderr.write("\nevaluating:\n");
 
-            const finalResult = try evaluation.evaluateNode(astAlloc, astRoot);
+            const finalResult = evaluation.evaluateNode(astAlloc, astRoot) catch |err| e: {
+                const EvaluationError = evaluation.EvaluationError;
+                if (err == EvaluationError.IncompatibleTypesForOperands) {
+                    _ = try stderr.write("types are incompatible!\n");
+                } else if (err == EvaluationError.NoOperationForOperands) {
+                    _ = try stderr.write("could not find a suitable operation for operands!\n");
+                }
+
+                break :e .nil;
+            };
             try printResult(finalResult, stderr.any());
         },
         .unknown => {
@@ -172,26 +181,4 @@ fn printResult(result: evaluation.Result, out: std.io.AnyWriter) !void {
         .string => |str| try out.print("{s}", .{str}),
         .nil => _ = try out.write("nil"),
     }
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit();
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "use other module" {
-    try std.testing.expectEqual(@as(i32, 150), lib.add(100, 50));
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
 }
