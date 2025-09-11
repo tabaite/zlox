@@ -23,132 +23,120 @@ pub const Result = union(Types) {
 // TODO: wrap this into a struct. That way, we can "work around" Zig's primitive errors
 // by having error information recoverable from the state.
 
-pub const Evaluator = struct {
-    currentNode: *parsing.Expression,
+pub fn evaluateNode(allocator: Allocator, expression: *parsing.Expression) !Result {
+    switch (expression.*) {
+        .binary => |b| return try evaluateBinary(
+            allocator,
+            b.operation,
+            try evaluateNode(allocator, b.left),
+            try evaluateNode(allocator, b.right),
+        ),
+        .unary => |u| return try evaluateUnary(u.operation, try evaluateNode(allocator, u.expr)),
+        .literal => |l| return evaluateLiteral(l),
+        .grouping => |u| return try evaluateNode(allocator, u.expr),
+    }
+}
 
-    pub fn init(root: *parsing.Expression) Evaluator {
-        return .{ .currentNode = root };
+// We need the allocator for string concatenation (+)
+pub fn evaluateBinary(allocator: Allocator, op: parsing.BinaryExprType, left: Result, right: Result) !Result {
+    switch (op) {
+        .add => {
+            if (left == .number and right == .number) {
+                return .{ .number = left.number + right.number };
+            } else if (left == .string and right == .string) {
+                return .{ .string = try std.mem.concat(allocator, u8, &[_][]const u8{ left.string, right.string }) };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .subtract => {
+            if (left == .number and right == .number) {
+                return .{ .number = left.number - right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .multiply => {
+            if (left == .number and right == .number) {
+                return .{ .number = left.number * right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .divide => {
+            if (left == .number and right == .number) {
+                return .{ .number = left.number / right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .greater => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number > right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .greaterEqual => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number >= right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .less => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number < right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .lessEqual => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number <= right.number };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .equality => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number == right.number };
+            } else if (left == .string and right == .string) {
+                return .{ .bool = std.mem.eql(u8, left.string, right.string) };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
+        .notEquality => {
+            if (left == .number and right == .number) {
+                return .{ .bool = left.number != right.number };
+            } else if (left == .string and right == .string) {
+                return .{ .bool = !std.mem.eql(u8, left.string, right.string) };
+            } else {
+                return EvaluationError.NoOperationForOperands;
+            }
+        },
     }
-
-    pub fn evaluate(self: *Evaluator, allocator: Allocator) !Result {
-        return evaluateNode(self, allocator, self.currentNode);
-    }
-    fn evaluateNode(self: *Evaluator, allocator: Allocator, expression: *parsing.Expression) !Result {
-        self.currentNode = expression;
-        switch (expression.*) {
-            .binary => |b| return try evaluateBinary(
-                allocator,
-                b.operation,
-                try self.evaluateNode(allocator, b.left),
-                try self.evaluateNode(allocator, b.right),
-            ),
-            .unary => |u| return try evaluateUnary(u.operation, try self.evaluateNode(allocator, u.expr)),
-            .literal => |l| return evaluateLiteral(l),
-            .grouping => |u| return try self.evaluateNode(allocator, u.expr),
-        }
-    }
-
-    // We need the allocator for string concatenation (+)
-    fn evaluateBinary(allocator: Allocator, op: parsing.BinaryExprType, left: Result, right: Result) !Result {
-        switch (op) {
-            .add => {
-                if (left == .number and right == .number) {
-                    return .{ .number = left.number + right.number };
-                } else if (left == .string and right == .string) {
-                    return .{ .string = try std.mem.concat(allocator, u8, &[_][]const u8{ left.string, right.string }) };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .subtract => {
-                if (left == .number and right == .number) {
-                    return .{ .number = left.number - right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .multiply => {
-                if (left == .number and right == .number) {
-                    return .{ .number = left.number * right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .divide => {
-                if (left == .number and right == .number) {
-                    return .{ .number = left.number / right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .greater => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number > right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .greaterEqual => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number >= right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .less => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number < right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .lessEqual => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number <= right.number };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .equality => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number == right.number };
-                } else if (left == .string and right == .string) {
-                    return .{ .bool = std.mem.eql(u8, left.string, right.string) };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-            .notEquality => {
-                if (left == .number and right == .number) {
-                    return .{ .bool = left.number != right.number };
-                } else if (left == .string and right == .string) {
-                    return .{ .bool = !std.mem.eql(u8, left.string, right.string) };
-                } else {
-                    return EvaluationError.NoOperationForOperands;
-                }
-            },
-        }
-    }
-    fn evaluateUnary(op: parsing.UnaryExprType, right: Result) !Result {
-        switch (right) {
-            .number => |num| switch (op) {
-                .negate => return .{ .number = -num },
-                else => return EvaluationError.NoOperationForOperands,
-            },
-            .bool => |b| switch (op) {
-                .negateBool => return .{ .bool = !b },
-                else => return EvaluationError.NoOperationForOperands,
-            },
+}
+pub fn evaluateUnary(op: parsing.UnaryExprType, right: Result) !Result {
+    switch (right) {
+        .number => |num| switch (op) {
+            .negate => return .{ .number = -num },
             else => return EvaluationError.NoOperationForOperands,
-        }
+        },
+        .bool => |b| switch (op) {
+            .negateBool => return .{ .bool = !b },
+            else => return EvaluationError.NoOperationForOperands,
+        },
+        else => return EvaluationError.NoOperationForOperands,
     }
-    fn evaluateLiteral(literal: parsing.Literal) Result {
-        switch (literal) {
-            .nil => return .nil,
-            .true => return .{ .bool = true },
-            .false => return .{ .bool = false },
-            .string => |str| return .{ .string = str },
-            .number => |num| return .{ .number = num },
-        }
+}
+pub fn evaluateLiteral(literal: parsing.Literal) Result {
+    switch (literal) {
+        .nil => return .nil,
+        .true => return .{ .bool = true },
+        .false => return .{ .bool = false },
+        .string => |str| return .{ .string = str },
+        .number => |num| return .{ .number = num },
     }
-};
+}

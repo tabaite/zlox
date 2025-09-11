@@ -97,23 +97,29 @@ pub fn main() !void {
             var astParser = parsing.AstParser.new(&iter);
             const astRoot = try astParser.parse(astAlloc);
 
-            try parsing.printStatements(astRoot, stderr.any());
-
             _ = try stderr.write("\nevaluating:\n");
 
-            // TODO: fix this hack
-            var evaluator = evaluation.Evaluator.init(astRoot.expr);
-            const finalResult = evaluator.evaluate(astAlloc) catch |err| e: {
-                const EvaluationError = evaluation.EvaluationError;
-                if (err == EvaluationError.IncompatibleTypesForOperands) {
-                    _ = try stderr.write("types are incompatible!\n");
-                } else if (err == EvaluationError.NoOperationForOperands) {
-                    _ = try stderr.write("could not find a suitable operation for operands!\n");
-                }
+            const stderrAny = stderr.any();
+            var current: ?*parsing.Statement = astRoot;
+            while (current != null) {
+                const actual = current orelse unreachable;
+                try parsing.printExpression(actual.expr, stderrAny);
+                _ = try stderrAny.write(" - ");
+                const result = evaluation.evaluateNode(astAlloc, actual.expr) catch |err| e: {
+                    const EvaluationError = evaluation.EvaluationError;
+                    if (err == EvaluationError.IncompatibleTypesForOperands) {
+                        _ = try stderr.write("types are incompatible!\n");
+                    } else if (err == EvaluationError.NoOperationForOperands) {
+                        _ = try stderr.write("could not find a suitable operation for operands!\n");
+                    }
 
-                break :e .nil;
-            };
-            try printResult(finalResult, stderr.any());
+                    break :e .nil;
+                };
+
+                try printResult(result, stderrAny);
+                _ = try stderrAny.write("\n");
+                current = actual.next;
+            }
         },
         .unknown => {
             try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
