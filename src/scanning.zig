@@ -257,6 +257,57 @@ fn isAlphaNumeric(char: u8) bool {
     return isAlpha(char) or isNumeric(char);
 }
 
-pub export fn add(a: i32, b: i32) i32 {
-    return a + b;
+pub fn printToken(token: Token, out: std.io.AnyWriter) !void {
+    _ = switch (token.tokenType) {
+        .bang => try out.write("BANG ! null\n"),
+        .bangEqual => try out.write("BANG_EQUAL != null\n"),
+        .less => try out.write("LESS < null\n"),
+        .lessEqual => try out.write("LESS_EQUAL <= null\n"),
+        .greater => try out.write("GREATER > null\n"),
+        .greaterEqual => try out.write("GREATER >= null\n"),
+        .equal => try out.write("EQUAL = null\n"),
+        .equalEqual => try out.write("EQUAL_EQUAL == null\n"),
+        .leftParen => try out.write("LEFT_PAREN ( null\n"),
+        .rightParen => try out.write("RIGHT_PAREN ) null\n"),
+        .leftBrace => try out.write("LEFT_BRACE { null\n"),
+        .rightBrace => try out.write("RIGHT_BRACE } null\n"),
+        .comma => try out.write("COMMA , null\n"),
+        .dot => try out.write("DOT . null\n"),
+        .minus => try out.write("MINUS - null\n"),
+        .plus => try out.write("PLUS + null\n"),
+        .semicolon => try out.write("SEMICOLON ; null\n"),
+        .star => try out.write("STAR * null\n"),
+        .slash => try out.write("SLASH / null\n"),
+
+        .kwAnd => try out.write("AND and null\n"),
+        .kwClass => try out.write("CLASS class null\n"),
+        .kwElse => try out.write("ELSE else null\n"),
+        .kwFalse => try out.write("FALSE false null\n"),
+        .kwFun => try out.write("FUN fun null\n"),
+        .kwFor => try out.write("FOR for null\n"),
+        .kwIf => try out.write("IF if null\n"),
+        .kwNil => try out.write("NIL nil null\n"),
+        .kwOr => try out.write("OR or null\n"),
+        .kwPrint => try out.write("PRINT print null\n"),
+        .kwReturn => try out.write("RETURN return null\n"),
+        .kwSuper => try out.write("SUPER super null\n"),
+        .kwThis => try out.write("THIS this null\n"),
+        .kwTrue => try out.write("TRUE true null\n"),
+        .kwVar => try out.write("VAR var null\n"),
+        .kwWhile => try out.write("WHILE while null\n"),
+
+        .number => {
+            const str = token.source orelse "";
+            try out.print("NUMBER {s} <NUMBER>\n", .{str});
+        },
+        .string => {
+            const str = token.source orelse "";
+            try out.print("STRING \"{s}\" {s}\n", .{ str, str });
+        },
+        .identifier => {
+            const str = token.source orelse "";
+            try out.print("IDENTIFIER {s} null\n", .{str});
+        },
+        else => unreachable,
+    };
 }

@@ -118,6 +118,7 @@ pub fn evaluateBinary(allocator: Allocator, op: parsing.BinaryExprType, left: Re
         },
     }
 }
+
 pub fn evaluateUnary(op: parsing.UnaryExprType, right: Result) !Result {
     switch (right) {
         .number => |num| switch (op) {
@@ -138,5 +139,13 @@ pub fn evaluateLiteral(literal: parsing.Literal) Result {
         .false => return .{ .bool = false },
         .string => |str| return .{ .string = str },
         .number => |num| return .{ .number = num },
+    }
+}
+pub fn printResult(result: Result, out: std.io.AnyWriter) !void {
+    switch (result) {
+        .bool => |b| try out.print("{s}", .{if (b) "true" else "false"}),
+        .number => |n| try out.print("{d}", .{n}),
+        .string => |str| try out.print("{s}", .{str}),
+        .nil => _ = try out.write("nil"),
     }
 }
