@@ -35,14 +35,16 @@ pub const UnaryExprType = enum {
     negateBool,
 };
 
+pub const Literal = union(enum) {
+    number: f64,
+    string: []u8,
+    true,
+    false,
+    nil,
+};
+
 pub const Expression = union(enum) {
-    literal: union(enum) {
-        number: f64,
-        string: []u8,
-        true,
-        false,
-        nil,
-    },
+    literal: Literal,
     unary: struct {
         operation: UnaryExprType,
         expr: *Expression,

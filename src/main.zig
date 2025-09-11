@@ -6,16 +6,19 @@ const builtin = @import("builtin");
 const lib = @import("libzlox");
 const scanning = lib.scanning;
 const parsing = lib.parsing;
+const evaluation = lib.evaluation;
 
 pub const ProgramFunction = enum {
     unknown,
     tokenize,
     parse,
+    evaluate,
 };
 
 pub const functionMap = std.StaticStringMap(ProgramFunction).initComptime(.{
     .{ "tokenize", .tokenize },
     .{ "parse", .parse },
+    .{ "evaluate", .evaluate },
 });
 
 pub fn main() !void {
@@ -84,8 +87,22 @@ pub fn main() !void {
 
             var astParser = parsing.AstParser.new(&iter);
             const astRoot = try astParser.parse(astAlloc);
-            _ = try stderr.write("note: this is NOT the parsed form of the file, just a testing tree\n");
             try parsing.printExpression(astRoot, stderr.any());
+        },
+        .evaluate => {
+            var arena = std.heap.ArenaAllocator.init(gpa);
+            defer arena.deinit();
+            const astAlloc = arena.allocator();
+
+            var astParser = parsing.AstParser.new(&iter);
+            const astRoot = try astParser.parse(astAlloc);
+
+            try parsing.printExpression(astRoot, stderr.any());
+
+            _ = try stderr.write("evaluating:\n");
+
+            const finalResult = try evaluation.evaluateNode(astAlloc, astRoot);
+            try printResult(finalResult, stderr.any());
         },
         .unknown => {
             try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
@@ -146,6 +163,15 @@ fn printToken(token: scanning.Token, out: std.io.AnyWriter) !void {
         },
         else => unreachable,
     };
+}
+
+fn printResult(result: evaluation.Result, out: std.io.AnyWriter) !void {
+    switch (result) {
+        .bool => |b| try out.print("{s}", .{if (b) "true" else "false"}),
+        .number => |n| try out.print("{d}", .{n}),
+        .string => |str| try out.print("{s}", .{str}),
+        .nil => _ = try out.write("nil"),
+    }
 }
 
 test "simple test" {
