@@ -65,7 +65,7 @@ pub fn evaluateBinary(allocator: Allocator, op: parsing.BinaryExprType, left: Re
         .multiply => {
             switch (left) {
                 .number => |leftNum| switch (right) {
-                    .number => |rightNum| return .{ .number = leftNum - rightNum },
+                    .number => |rightNum| return .{ .number = leftNum * rightNum },
                     else => return EvaluationError.IncompatibleTypesForOperands,
                 },
                 else => return EvaluationError.NoOperationForOperands,
@@ -74,7 +74,7 @@ pub fn evaluateBinary(allocator: Allocator, op: parsing.BinaryExprType, left: Re
         .divide => {
             switch (left) {
                 .number => |leftNum| switch (right) {
-                    .number => |rightNum| return .{ .number = leftNum - rightNum },
+                    .number => |rightNum| return .{ .number = leftNum / rightNum },
                     else => return EvaluationError.IncompatibleTypesForOperands,
                 },
                 else => return EvaluationError.NoOperationForOperands,
