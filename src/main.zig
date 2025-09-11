@@ -101,7 +101,8 @@ pub fn main() !void {
 
             _ = try stderr.write("\nevaluating:\n");
 
-            const finalResult = evaluation.evaluateNode(astAlloc, astRoot) catch |err| e: {
+            var evaluator = evaluation.Evaluator.init(astRoot);
+            const finalResult = evaluator.evaluate(astAlloc) catch |err| e: {
                 const EvaluationError = evaluation.EvaluationError;
                 if (err == EvaluationError.IncompatibleTypesForOperands) {
                     _ = try stderr.write("types are incompatible!\n");
