@@ -34,6 +34,7 @@ pub fn evaluateNode(allocator: Allocator, expression: *parsing.Expression) !Resu
         .unary => |u| return try evaluateUnary(u.operation, try evaluateNode(allocator, u.expr)),
         .literal => |l| return evaluateLiteral(l),
         .grouping => |u| return try evaluateNode(allocator, u.expr),
+        .functionCall => return evaluateLiteral(.nil),
     }
 }
 

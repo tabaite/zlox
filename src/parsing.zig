@@ -18,6 +18,7 @@ pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
     ExpectedSemicolon,
+    ExpectedClosingBrace,
 };
 
 pub const BinaryExprType = enum {
@@ -52,6 +53,9 @@ pub const Statement = struct {
 };
 
 pub const Expression = union(enum) {
+    functionCall: struct {
+        name: []u8,
+    },
     literal: Literal,
     unary: struct {
         operation: UnaryExprType,
@@ -88,7 +92,7 @@ pub const AstParser = struct {
     }
 
     // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
-    fn tryPeek(self: *AstParser) ?scanning.Token {
+    pub fn tryPeek(self: *AstParser) ?scanning.Token {
         return self.lastToken;
     }
 
@@ -119,7 +123,7 @@ pub const AstParser = struct {
     }
 
     fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
-        const expression = try self.expressionRule(allocator);
+        const expression = try self.functionCallRule(allocator);
         const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             return ParsingError.ExpectedSemicolon;
@@ -128,6 +132,42 @@ pub const AstParser = struct {
         statement.* = .{ .expr = expression, .next = null };
         self.advance();
         return statement;
+    }
+
+    fn functionCallRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const name = self.tryPeek() orelse return self.expressionRule(allocator);
+        if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
+            return self.expressionRule(allocator);
+        }
+        self.advance();
+        const startParen = self.tryPeek() orelse return ParsingError.ExpectedToken;
+
+        if (startParen.tokenType != .leftParen) {
+            return self.expressionRule(allocator);
+        }
+        self.advance();
+
+        while (self.tryPeek()) |t| {
+            if (t.tokenType == .rightParen) {
+                break;
+            }
+            _ = try self.functionCallRule(allocator);
+            const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+            if (seperator.tokenType != .comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+        if (endParen.tokenType != .rightParen) {
+            return ParsingError.ExpectedClosingBrace;
+        }
+        const expr = try allocator.create(Expression);
+        const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
+        expr.* = Expression{ .functionCall = .{ .name = fnName } };
+        self.advance();
+        return expr;
     }
 
     fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
@@ -238,6 +278,7 @@ pub fn printStatements(stmt: *Statement, out: std.io.AnyWriter) !void {
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
     switch (expr.*) {
+        .functionCall => |f| try out.print("CALL \"{s}\"", .{f.name}),
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
             .string => |str| try out.print("\"{s}\"", .{str}),

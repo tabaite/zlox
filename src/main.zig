@@ -94,12 +94,32 @@ pub fn main() !void {
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
+            const stderrAny = stderr.any();
+
             var astParser = parsing.AstParser.new(&iter);
-            const astRoot = try astParser.parse(astAlloc);
+            const astRoot = astParser.parse(astAlloc) catch |e| {
+                const pos = astParser.iter.position;
+                switch (e) {
+                    parsing.ParsingError.ExpectedSemicolon => _ = try stderr.write("expected semicolon\n"),
+                    parsing.ParsingError.ExpectedClosingBrace => _ = try stderr.write("expected closing brace\n"),
+                    parsing.ParsingError.ExpectedToken => _ = try stderr.write("expected a token\n"),
+                    parsing.ParsingError.UnexpectedToken => _ = try stderr.write("unexpected token!\n"),
+                    error.OutOfMemory => _ = try stderr.write("out of memory :(\n"),
+                    else => return e,
+                }
+                _ = try stderr.write("token:\n");
+                if (astParser.tryPeek() != null) {
+                    try scanning.printToken(astParser.tryPeek() orelse unreachable, stderrAny);
+                }
+                _ = try stderr.write("\n");
+                _ = try stderr.write(astParser.iter.source[0..pos]);
+                _ = try stderr.write("<HERE>");
+                _ = try stderr.write(astParser.iter.source[pos..]);
+                return;
+            };
 
             _ = try stderr.write("\nevaluating:\n");
 
-            const stderrAny = stderr.any();
             var current: ?*parsing.Statement = astRoot;
             while (current != null) {
                 const actual = current orelse unreachable;
