@@ -49,7 +49,6 @@ pub const Literal = union(enum) {
 
 pub const Statement = struct {
     expr: *Expression,
-    next: ?*Statement,
 };
 
 pub const Expression = union(enum) {
@@ -105,31 +104,21 @@ pub const AstParser = struct {
     // The function mutates the state of the parser, moving the position forward
     // to the token immediately after the expression it returns.
 
-    // Returns the root of the AST.
-    pub fn parse(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
-        return try self.programRule(allocator);
-    }
-
-    fn programRule(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
-        const root = try self.statementRule(allocator);
-        var currentStatement = root;
-        while (self.tryPeek()) |_| {
-            const newStatement = try self.statementRule(allocator);
-            currentStatement.next = newStatement;
-
-            currentStatement = newStatement;
+    pub fn nextStatement(self: *AstParser, allocator: std.mem.Allocator) !?Statement {
+        if (self.tryPeek() == null) {
+            return null;
         }
-        return root;
+
+        return try self.statementRule(allocator);
     }
 
-    fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !*Statement {
+    fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !Statement {
         const expression = try self.functionCallRule(allocator);
         const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             return ParsingError.ExpectedSemicolon;
         }
-        const statement = try allocator.create(Statement);
-        statement.* = .{ .expr = expression, .next = null };
+        const statement = Statement{ .expr = expression };
         self.advance();
         return statement;
     }
@@ -266,14 +255,9 @@ pub const AstParser = struct {
     }
 };
 
-pub fn printStatements(stmt: *Statement, out: std.io.AnyWriter) !void {
-    var current: ?*Statement = stmt;
-    while (current != null) {
-        const actual = current orelse unreachable;
-        try printExpression(actual.expr, out);
-        _ = try out.write("\n");
-        current = actual.next;
-    }
+pub fn printStatement(stmt: Statement, out: std.io.AnyWriter) !void {
+    try printExpression(stmt.expr, out);
+    _ = try out.write("\n");
 }
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {

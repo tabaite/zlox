@@ -7,6 +7,7 @@ const lib = @import("libzlox");
 const scanning = lib.scanning;
 const parsing = lib.parsing;
 const evaluation = lib.evaluation;
+const ir = lib.ir;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -22,6 +23,8 @@ pub const functionMap = std.StaticStringMap(ProgramFunction).initComptime(.{
 });
 
 pub fn main() !void {
+    std.debug.print("sizeof/alignof ir var handle: {d}/{d}\n", .{ @sizeOf(ir.VarHandle), @alignOf(ir.VarHandle) });
+    std.debug.print("sizeof/alignof ir operation: {d}/{d}\n", .{ @sizeOf(ir.Operation), @alignOf(ir.Operation) });
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
     const gpa = switch (builtin.mode) {
@@ -59,6 +62,8 @@ pub fn main() !void {
 
     var iter = scanning.TokenIterator.init(contents);
 
+    const stderrAny = stderr.any();
+
     switch (operation) {
         .tokenize => {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
@@ -86,46 +91,35 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var astParser = parsing.AstParser.new(&iter);
-            const astRoot = try astParser.parse(astAlloc);
-            try parsing.printStatements(astRoot, stderr.any());
+            while (astParser.nextStatement(astAlloc) catch |e| err: {
+                try handleError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                break :err null;
+            }) |s| {
+                try parsing.printStatement(s, stderrAny);
+            }
         },
         .evaluate => {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
-            const stderrAny = stderr.any();
+            var statementList = std.ArrayList(parsing.Statement).init(gpa);
+            defer statementList.deinit();
 
             var astParser = parsing.AstParser.new(&iter);
-            const astRoot = astParser.parse(astAlloc) catch |e| {
-                const pos = astParser.iter.position;
-                switch (e) {
-                    parsing.ParsingError.ExpectedSemicolon => _ = try stderr.write("expected semicolon\n"),
-                    parsing.ParsingError.ExpectedClosingBrace => _ = try stderr.write("expected closing brace\n"),
-                    parsing.ParsingError.ExpectedToken => _ = try stderr.write("expected a token\n"),
-                    parsing.ParsingError.UnexpectedToken => _ = try stderr.write("unexpected token!\n"),
-                    error.OutOfMemory => _ = try stderr.write("out of memory :(\n"),
-                    else => return e,
-                }
-                _ = try stderr.write("token:\n");
-                if (astParser.tryPeek() != null) {
-                    try scanning.printToken(astParser.tryPeek() orelse unreachable, stderrAny);
-                }
-                _ = try stderr.write("\n");
-                _ = try stderr.write(astParser.iter.source[0..pos]);
-                _ = try stderr.write("<HERE>");
-                _ = try stderr.write(astParser.iter.source[pos..]);
-                return;
-            };
+            while (astParser.nextStatement(astAlloc) catch |e| err: {
+                try handleError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                break :err null;
+            }) |s| {
+                try statementList.append(s);
+            }
 
             _ = try stderr.write("\nevaluating:\n");
 
-            var current: ?*parsing.Statement = astRoot;
-            while (current != null) {
-                const actual = current orelse unreachable;
-                try parsing.printExpression(actual.expr, stderrAny);
+            for (statementList.items) |stmt| {
+                try parsing.printExpression(stmt.expr, stderrAny);
                 _ = try stderrAny.write(" - ");
-                const result = evaluation.evaluateNode(astAlloc, actual.expr) catch |err| e: {
+                const result = evaluation.evaluateNode(astAlloc, stmt.expr) catch |err| e: {
                     const EvaluationError = evaluation.EvaluationError;
                     if (err == EvaluationError.IncompatibleTypesForOperands) {
                         _ = try stderr.write("types are incompatible!\n");
@@ -138,11 +132,26 @@ pub fn main() !void {
 
                 try evaluation.printResult(result, stderrAny);
                 _ = try stderrAny.write("\n");
-                current = actual.next;
             }
         },
         .unknown => {
             try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
         },
     }
+}
+
+fn handleError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize) !void {
+    switch (err) {
+        parsing.ParsingError.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
+        parsing.ParsingError.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
+        parsing.ParsingError.ExpectedToken => _ = try out.write("expected a token\n"),
+        parsing.ParsingError.UnexpectedToken => _ = try out.write("unexpected token!\n"),
+        else => return err,
+    }
+    _ = try out.write("token:\n");
+    _ = try out.write("\n");
+    _ = try out.write(source[0..position]);
+    _ = try out.write("<HERE>");
+    _ = try out.write(source[position..]);
+    return;
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const parsing = @import("parsing.zig");
+const ir = @import("ir.zig");
 const Allocator = std.mem.Allocator;
 
 pub const EvaluationError = error{
@@ -7,13 +8,7 @@ pub const EvaluationError = error{
     IncompatibleTypesForOperands,
 };
 
-pub const Types = enum {
-    number,
-    string,
-    bool,
-    nil,
-};
-pub const Result = union(Types) {
+pub const Result = union(ir.Type) {
     number: f64,
     string: []u8,
     bool: bool,
