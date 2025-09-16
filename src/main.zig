@@ -114,10 +114,13 @@ pub fn main() !void {
 
             _ = try stderr.write("\nevaluating:\n");
 
+            var evaluator = evaluation.Evaluator.init(try runtime.Runtime.init(astAlloc, gpa));
+            defer evaluator.runtime.deinit();
+
             for (statementList.items) |stmt| {
                 try parsing.printExpression(stmt.expr, stderrAny);
                 _ = try stderrAny.write(" - ");
-                const result = evaluation.evaluateNode(astAlloc, stmt.expr) catch |err| e: {
+                const result = evaluator.evaluateNode(astAlloc, stmt.expr) catch |err| e: {
                     const EvaluationError = evaluation.EvaluationError;
                     if (err == EvaluationError.IncompatibleTypesForOperands) {
                         _ = try stderr.write("types are incompatible!\n");

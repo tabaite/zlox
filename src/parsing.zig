@@ -42,7 +42,14 @@ pub const UnaryExprType = enum {
     negateBool,
 };
 
-pub const Literal = union(enum) {
+pub const Type = enum(u8) {
+    number,
+    string,
+    bool,
+    nil,
+};
+
+pub const Literal = union(Type) {
     number: f64,
     string: []u8,
     bool: bool,
