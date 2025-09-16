@@ -115,7 +115,7 @@ pub fn main() !void {
             _ = try stderr.write("\nevaluating:\n");
 
             var evaluator = evaluation.Evaluator.init(try runtime.Runtime.init(astAlloc, gpa));
-            defer evaluator.runtime.deinit();
+            defer evaluator.deinit();
 
             for (statementList.items) |stmt| {
                 try parsing.printExpression(stmt.expr, stderrAny);

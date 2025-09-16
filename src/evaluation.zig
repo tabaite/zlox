@@ -20,6 +20,10 @@ pub const Evaluator = struct {
         return .{ .runtime = rt };
     }
 
+    pub fn deinit(self: *Evaluator) void {
+        self.runtime.deinit();
+    }
+
     pub fn evaluateNode(self: *Evaluator, allocator: Allocator, expression: *parsing.Expression) (Allocator.Error || runtime.RuntimeError || EvaluationError)!Result {
         switch (expression.*) {
             .binary => |b| return self.evaluateBinary(
