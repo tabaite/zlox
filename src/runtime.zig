@@ -23,11 +23,22 @@ pub const VarHandle = packed struct {
     type: Type,
 };
 
+test "push varstack" {
+    var debug = std.heap.DebugAllocator(.{}){};
+    defer _ = debug.deinit();
+    const gpa = debug.allocator();
+    var stack = try VarStack.init(gpa, gpa);
+    stack.pop();
+
+    stack.deinit();
+}
+
 pub const VarStack = struct {
     const NILHANDLE: VarHandle = .{ .type = .nil, .handle = 0 };
     const STACKSIZE: usize = 16777215;
 
     items: []Variable,
+    allocator: Allocator,
     stringAllocator: Allocator,
     used: u24,
 
@@ -37,6 +48,7 @@ pub const VarStack = struct {
         return .{
             .items = items,
             .used = 1,
+            .allocator = allocator,
             .stringAllocator = stringAllocator,
         };
     }
@@ -45,6 +57,7 @@ pub const VarStack = struct {
         for (0..self.used - 1) |_| {
             self.pop();
         }
+        self.allocator.free(self.items);
     }
 
     fn push(self: *VarStack, v: Variable) !VarHandle {
@@ -72,8 +85,8 @@ pub const VarStack = struct {
             return RuntimeError.OutOfStackBounds;
         }
 
-        const item = &self.items[handle.handle];
-        if (item.* == .string) {
+        const item = self.items[handle.handle];
+        if (item == .string) {
             self.stringAllocator.free(item.string);
         }
 
@@ -102,13 +115,12 @@ pub const VarStack = struct {
     }
 
     pub fn pop(self: *VarStack) void {
-        const handle = self.items[self.used];
-        if (handle == .string) {
-            self.stringAllocator.free(handle.string);
-        }
-
         // The first element is our nil handle.
         if (self.used > 1) {
+            const handle = self.items[self.used - 1];
+            if (handle == .string) {
+                self.stringAllocator.free(handle.string);
+            }
             self.used -= 1;
         }
     }
@@ -124,15 +136,14 @@ pub const Runtime = struct {
         };
     }
     pub fn deinit(self: *Runtime) void {
-        self.varRegistry.deinit();
         self.variableStack.deinit();
+        self.varRegistry.deinit();
     }
 
     pub fn declare(self: *Runtime, name: []u8, v: ?Variable) !VarHandle {
         const handle = if (v != null) try self.push(v orelse unreachable) else VarStack.NILHANDLE;
         const result = try self.varRegistry.getOrPut(name);
         if (result.found_existing) {
-            std.debug.print("huh???\n", .{});
             return RuntimeError.VariableAlreadyDeclared;
         } else {
             result.value_ptr.* = handle;
