@@ -68,6 +68,9 @@ pub const Expression = union(enum) {
     functionCall: struct {
         name: []u8,
     },
+    variable: struct {
+        name: []u8,
+    },
     literal: Literal,
     unary: struct {
         operation: UnaryExprType,
@@ -137,9 +140,9 @@ pub const AstParser = struct {
     }
 
     fn declarationRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const decl = self.tryPeek() orelse return self.functionCallRule(allocator);
+        const decl = self.tryPeek() orelse return self.functionCallOrVariableRule(allocator);
         if (decl.tokenType != .kwVar) {
-            return self.functionCallRule(allocator);
+            return self.functionCallOrVariableRule(allocator);
         }
         self.advance();
         const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
@@ -157,7 +160,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                const result = try self.functionCallRule(allocator);
+                const result = try self.functionCallOrVariableRule(allocator);
 
                 const expr = try allocator.create(Expression);
                 expr.* = Expression{ .declaration = .{ .name = name.source orelse @constCast("NULL NAME???"), .value = result } };
@@ -167,13 +170,20 @@ pub const AstParser = struct {
         }
     }
 
-    fn functionCallRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    // Calls and variable usages both start with an identifier, so they're combined into one rule.
+    fn functionCallOrVariableRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const name = self.tryPeek() orelse return self.expressionRule(allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.expressionRule(allocator);
         }
         self.advance();
-        const startParen = self.tryPeek() orelse return ParsingError.ExpectedToken;
+        const startParen = self.tryPeek() orelse {
+            const v = try allocator.create(Expression);
+
+            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+
+            return v;
+        };
 
         if (startParen.tokenType != .leftParen) {
             return self.expressionRule(allocator);
@@ -184,7 +194,7 @@ pub const AstParser = struct {
             if (t.tokenType == .rightParen) {
                 break;
             }
-            _ = try self.functionCallRule(allocator);
+            _ = try self.functionCallOrVariableRule(allocator);
             const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
             if (seperator.tokenType != .comma) {
                 break;
@@ -317,6 +327,7 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
                 try printExpression(d.value orelse unreachable, out);
             }
         },
+        .variable => |v| try out.print("USE \"{s}\"", .{v.name}),
         .functionCall => |f| try out.print("CALL \"{s}\"", .{f.name}),
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),

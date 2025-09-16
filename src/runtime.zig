@@ -129,7 +129,6 @@ pub const Runtime = struct {
     }
 
     pub fn declare(self: *Runtime, name: []u8, v: ?Variable) !VarHandle {
-        std.debug.print("Declared {s}\n", .{name});
         const handle = if (v != null) try self.push(v orelse unreachable) else VarStack.NILHANDLE;
         const result = try self.varRegistry.getOrPut(name);
         if (result.found_existing) {
@@ -138,8 +137,12 @@ pub const Runtime = struct {
         } else {
             result.value_ptr.* = handle;
         }
-        std.debug.print("Set {s}\n", .{name});
         return handle;
+    }
+
+    pub fn getByName(self: *Runtime, name: []u8) !Variable {
+        const handle = self.varRegistry.get(name) orelse return RuntimeError.UndeclaredVariableAccessed;
+        return try self.variableStack.get(handle);
     }
 
     pub fn get(self: *Runtime, handle: VarHandle) !Variable {

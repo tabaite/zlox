@@ -131,7 +131,7 @@ pub fn main() !void {
             }
         },
         .unknown => {
-            try stderr.print("Usage: ./your_program tokenize <filename>\n", .{});
+            try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});
         },
     }
 }

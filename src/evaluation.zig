@@ -29,10 +29,11 @@ pub const Evaluator = struct {
                 try self.evaluateNode(allocator, b.right),
             ),
             .unary => |u| return self.evaluateUnary(u.operation, try self.evaluateNode(allocator, u.expr)),
-            .literal => |l| return evaluateLiteral(l),
+            .literal => |l| return .{ .literal = l },
             .grouping => |u| return self.evaluateNode(allocator, u.expr),
-            .functionCall => return evaluateLiteral(.nil),
+            .functionCall => return .{ .literal = .nil },
             .declaration => |d| return self.evaluateDeclaration(allocator, d.name, d.value),
+            .variable => |v| return .{ .literal = try self.getNameAsLiteral(v.name) },
         }
     }
 
@@ -168,8 +169,8 @@ pub const Evaluator = struct {
         return try self.runtime.get(handle);
     }
 
-    pub inline fn evaluateLiteral(literal: parsing.Literal) Result {
-        return .{ .literal = literal };
+    pub fn getNameAsLiteral(self: *Evaluator, name: []u8) !parsing.Literal {
+        return try self.runtime.getByName(name);
     }
 };
 pub fn printResult(result: Result, out: std.io.AnyWriter) !void {
