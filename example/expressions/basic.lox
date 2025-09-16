@@ -3,4 +3,5 @@
 0.2 + 0.1;
 (((((((1243)))))));
 var sex = "heya";
+print(sex, "");
 "im strokin it" == "im strokin it";

@@ -186,8 +186,13 @@ pub const AstParser = struct {
         };
 
         if (startParen.tokenType != .leftParen) {
-            return self.expressionRule(allocator);
+            const v = try allocator.create(Expression);
+
+            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+
+            return v;
         }
+
         self.advance();
 
         while (self.tryPeek()) |t| {
@@ -302,7 +307,6 @@ pub const AstParser = struct {
             .kwNil => break :lit Expression{ .literal = .nil },
             .kwTrue => break :lit Expression{ .literal = .{ .bool = true } },
             .kwFalse => break :lit Expression{ .literal = .{ .bool = false } },
-            // todo: expressions in parethesis
             else => return error.UnexpectedToken,
         };
         return primary;
