@@ -125,7 +125,7 @@ pub fn main() !void {
                         _ = try stderr.write("could not find a suitable operation for operands!\n");
                     }
 
-                    break :e .nil;
+                    break :e evaluation.Result{ .literal = .nil };
                 };
 
                 try evaluation.printResult(result, stderrAny);

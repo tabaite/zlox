@@ -45,8 +45,7 @@ pub const UnaryExprType = enum {
 pub const Literal = union(enum) {
     number: f64,
     string: []u8,
-    true,
-    false,
+    bool: bool,
     nil,
 };
 
@@ -284,8 +283,8 @@ pub const AstParser = struct {
                 break :lit literal;
             },
             .kwNil => break :lit Expression{ .literal = .nil },
-            .kwTrue => break :lit Expression{ .literal = .true },
-            .kwFalse => break :lit Expression{ .literal = .false },
+            .kwTrue => break :lit Expression{ .literal = .{ .bool = true } },
+            .kwFalse => break :lit Expression{ .literal = .{ .bool = false } },
             // todo: expressions in parethesis
             else => return error.UnexpectedToken,
         };
@@ -315,8 +314,11 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
             .string => |str| try out.print("\"{s}\"", .{str}),
-            .true => _ = try out.write("true"),
-            .false => _ = try out.write("false"),
+            .bool => |b| if (b) {
+                _ = try out.write("true");
+            } else {
+                _ = try out.write("false");
+            },
             .nil => _ = try out.write("nil"),
         },
         .unary => |u| {

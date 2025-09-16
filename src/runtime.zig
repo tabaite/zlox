@@ -40,19 +40,6 @@ pub const OperatorType = enum(u32) {
     print,
 };
 
-fn Handle(repr: type, tag: []const u8) type {
-    return enum(repr) {
-        _,
-        pub fn idx(self: @This()) u32 {
-            return @intFromEnum(self);
-        }
-        // credit to @squirl from https://zig.news/msw/a-distinct-index-types-journey-12fp
-        comptime {
-            _ = tag;
-        }
-    };
-}
-
 pub const Operation = struct {
     op: OperatorType,
     operandA: VarHandle,
@@ -61,7 +48,7 @@ pub const Operation = struct {
 
 // A handle to a variable stored in the IRHandler.
 pub const VarHandle = packed struct {
-    handle: Handle(u24, "handle for the variable"),
+    handle: u24,
     type: Type,
 };
 
@@ -108,17 +95,12 @@ pub const VarStack = struct {
         return self.push(.bool, @intCast(@intFromBool(b)));
     }
 
+    // We might not need to dupe the string. I'm still undecided on when the
+    // lifetime of the input file ends.
+
     pub fn pushString(self: *VarStack, str: []u8) !VarHandle {
         const newString = try self.stringAllocator.dupe(u8, str);
         return self.push(.string, @intCast(@intFromPtr(&newString)));
-    }
-
-    pub fn peek(self: *VarStack) ?VarHandle {
-        if (self.used > 0) {
-            const top = self.items[self.used];
-            return .{ .handle = self.used, .type = top.type };
-        }
-        return null;
     }
 
     pub fn pop(self: *VarStack) void {
@@ -132,5 +114,16 @@ pub const Runtime = struct {
     variableStack: VarStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{ .variableStack = try VarStack.init(allocator, stringAllocator) };
+    }
+
+    pub fn push(self: *Runtime, v: parsing.Literal) !VarHandle {
+        switch (v) {
+            .number => |n| return self.variableStack.pushNumber(n),
+            .string => |s| return self.variableStack.pushString(s),
+            .true => return self.variableStack.pushBool(true),
+            .false => return self.variableStack.pushBool(false),
+            // bro...... trust me
+            .nil => unreachable,
+        }
     }
 };
