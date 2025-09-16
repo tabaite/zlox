@@ -140,9 +140,9 @@ pub const AstParser = struct {
     }
 
     fn declarationRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const decl = self.tryPeek() orelse return self.functionCallOrVariableRule(allocator);
+        const decl = self.tryPeek() orelse return self.expressionRule(allocator);
         if (decl.tokenType != .kwVar) {
-            return self.functionCallOrVariableRule(allocator);
+            return self.expressionRule(allocator);
         }
         self.advance();
         const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
@@ -160,7 +160,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                const result = try self.functionCallOrVariableRule(allocator);
+                const result = try self.expressionRule(allocator);
 
                 const expr = try allocator.create(Expression);
                 expr.* = Expression{ .declaration = .{ .name = name.source orelse @constCast("NULL NAME???"), .value = result } };
@@ -168,54 +168,6 @@ pub const AstParser = struct {
             },
             else => return ParsingError.ExpectedToken,
         }
-    }
-
-    // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const name = self.tryPeek() orelse return self.expressionRule(allocator);
-        if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
-            return self.expressionRule(allocator);
-        }
-        self.advance();
-        const startParen = self.tryPeek() orelse {
-            const v = try allocator.create(Expression);
-
-            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
-
-            return v;
-        };
-
-        if (startParen.tokenType != .leftParen) {
-            const v = try allocator.create(Expression);
-
-            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
-
-            return v;
-        }
-
-        self.advance();
-
-        while (self.tryPeek()) |t| {
-            if (t.tokenType == .rightParen) {
-                break;
-            }
-            _ = try self.functionCallOrVariableRule(allocator);
-            const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
-            if (seperator.tokenType != .comma) {
-                break;
-            }
-            self.advance();
-        }
-
-        const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
-        if (endParen.tokenType != .rightParen) {
-            return ParsingError.ExpectedClosingBrace;
-        }
-        const expr = try allocator.create(Expression);
-        const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
-        expr.* = Expression{ .functionCall = .{ .name = fnName } };
-        self.advance();
-        return expr;
     }
 
     fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
@@ -240,7 +192,6 @@ pub const AstParser = struct {
         }
         return expression;
     }
-
     fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
         return self.binaryRule(allocator, matches, comparisonRule);
@@ -263,7 +214,7 @@ pub const AstParser = struct {
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
             .minus => .negate,
-            else => return try self.primaryRule(allocator),
+            else => return try self.functionCallOrVariableRule(allocator),
         };
 
         self.advance();
@@ -275,6 +226,55 @@ pub const AstParser = struct {
 
         return newRoot;
     }
+
+    // Calls and variable usages both start with an identifier, so they're combined into one rule.
+    fn functionCallOrVariableRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const name = self.tryPeek() orelse return self.primaryRule(allocator);
+        if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
+            return self.primaryRule(allocator);
+        }
+        self.advance();
+        const startParen = self.tryPeek() orelse {
+            const v = try allocator.create(Expression);
+
+            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+
+            return v;
+        };
+
+        if (startParen.tokenType != .leftParen) {
+            const v = try allocator.create(Expression);
+
+            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+
+            return v;
+        }
+
+        self.advance();
+
+        while (self.tryPeek()) |t| {
+            if (t.tokenType == .rightParen) {
+                break;
+            }
+            _ = try self.expressionRule(allocator);
+            const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+            if (seperator.tokenType != .comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+        if (endParen.tokenType != .rightParen) {
+            return ParsingError.ExpectedClosingBrace;
+        }
+        const expr = try allocator.create(Expression);
+        const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
+        expr.* = Expression{ .functionCall = .{ .name = fnName } };
+        self.advance();
+        return expr;
+    }
+
     fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         const token = self.tryPeek() orelse return error.ExpectedToken;
         self.advance();
