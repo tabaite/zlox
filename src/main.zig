@@ -7,7 +7,7 @@ const lib = @import("libzlox");
 const scanning = lib.scanning;
 const parsing = lib.parsing;
 const evaluation = lib.evaluation;
-const ir = lib.ir;
+const runtime = lib.runtime;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -23,8 +23,6 @@ pub const functionMap = std.StaticStringMap(ProgramFunction).initComptime(.{
 });
 
 pub fn main() !void {
-    std.debug.print("sizeof/alignof ir var handle: {d}/{d}\n", .{ @sizeOf(ir.VarHandle), @alignOf(ir.VarHandle) });
-    std.debug.print("sizeof/alignof ir operation: {d}/{d}\n", .{ @sizeOf(ir.Operation), @alignOf(ir.Operation) });
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
     const gpa = switch (builtin.mode) {
@@ -145,6 +143,7 @@ fn handleError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usi
         parsing.ParsingError.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
         parsing.ParsingError.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
         parsing.ParsingError.ExpectedToken => _ = try out.write("expected a token\n"),
+        parsing.ParsingError.ExpectedIdentifier => _ = try out.write("expected a name"),
         parsing.ParsingError.UnexpectedToken => _ = try out.write("unexpected token!\n"),
         else => return err,
     }

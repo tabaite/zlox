@@ -1,6 +1,6 @@
 const std = @import("std");
 const parsing = @import("parsing.zig");
-const ir = @import("ir.zig");
+const runtime = @import("runtime.zig");
 const Allocator = std.mem.Allocator;
 
 pub const EvaluationError = error{
@@ -8,7 +8,7 @@ pub const EvaluationError = error{
     IncompatibleTypesForOperands,
 };
 
-pub const Result = union(ir.Type) {
+pub const Result = union(runtime.Type) {
     number: f64,
     string: []u8,
     bool: bool,
@@ -30,6 +30,7 @@ pub fn evaluateNode(allocator: Allocator, expression: *parsing.Expression) !Resu
         .literal => |l| return evaluateLiteral(l),
         .grouping => |u| return try evaluateNode(allocator, u.expr),
         .functionCall => return evaluateLiteral(.nil),
+        .declaration => return evaluateLiteral(.nil),
     }
 }
 

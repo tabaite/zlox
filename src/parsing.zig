@@ -2,7 +2,8 @@ const scanning = @import("scanning.zig");
 const std = @import("std");
 
 // program        → ( statement )* EOF
-// statement      → ( expression | call ) ";"
+// statement      → ( decl | call | expression ) ";"
+// decl           → "var" IDENTIFIER ( "=" expression )?
 // call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
 // expression     → equality
 // equality       → comparison ( ( "!=" | "==" ) comparison )*
@@ -19,6 +20,8 @@ pub const ParsingError = error{
     ExpectedToken,
     ExpectedSemicolon,
     ExpectedClosingBrace,
+    ExpectedIdentifier,
+    ExpectedExpression,
 };
 
 pub const BinaryExprType = enum {
@@ -52,6 +55,10 @@ pub const Statement = struct {
 };
 
 pub const Expression = union(enum) {
+    declaration: struct {
+        name: []u8,
+        value: ?*Expression,
+    },
     functionCall: struct {
         name: []u8,
     },
@@ -113,7 +120,7 @@ pub const AstParser = struct {
     }
 
     fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !Statement {
-        const expression = try self.functionCallRule(allocator);
+        const expression = try self.declarationRule(allocator);
         const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             return ParsingError.ExpectedSemicolon;
@@ -121,6 +128,37 @@ pub const AstParser = struct {
         const statement = Statement{ .expr = expression };
         self.advance();
         return statement;
+    }
+
+    fn declarationRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const decl = self.tryPeek() orelse return self.functionCallRule(allocator);
+        if (decl.tokenType != .kwVar) {
+            return self.functionCallRule(allocator);
+        }
+        self.advance();
+        const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+        if (name.tokenType != .identifier) {
+            return ParsingError.ExpectedIdentifier;
+        }
+
+        self.advance();
+        const continuation = (self.tryPeek() orelse return ParsingError.ExpectedSemicolon);
+        switch (continuation.tokenType) {
+            .semicolon => {
+                const expr = try allocator.create(Expression);
+                expr.* = Expression{ .declaration = .{ .name = name.source orelse @constCast("NULL NAME???"), .value = null } };
+                return expr;
+            },
+            .equal => {
+                self.advance();
+                const result = try self.functionCallRule(allocator);
+
+                const expr = try allocator.create(Expression);
+                expr.* = Expression{ .declaration = .{ .name = name.source orelse @constCast("NULL NAME???"), .value = result } };
+                return expr;
+            },
+            else => return ParsingError.ExpectedToken,
+        }
     }
 
     fn functionCallRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
@@ -262,6 +300,17 @@ pub fn printStatement(stmt: Statement, out: std.io.AnyWriter) !void {
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
     switch (expr.*) {
+        .declaration => |d| {
+            if (d.value == null) {
+                _ = try out.print("declare \"{s}\"", .{d.name});
+            } else {
+                _ = try out.print("declare \"{s}\" = ", .{d.name});
+
+                // Given a VALID AST, this cannot recurse infinitely, as checking the value of
+                // a declaration starts at the call rule (a declaration cannot be declared to be another declaration)
+                try printExpression(d.value orelse unreachable, out);
+            }
+        },
         .functionCall => |f| try out.print("CALL \"{s}\"", .{f.name}),
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
