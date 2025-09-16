@@ -129,13 +129,16 @@ pub const Runtime = struct {
     }
 
     pub fn declare(self: *Runtime, name: []u8, v: ?Variable) !VarHandle {
+        std.debug.print("Declared {s}\n", .{name});
         const handle = if (v != null) try self.push(v orelse unreachable) else VarStack.NILHANDLE;
         const result = try self.varRegistry.getOrPut(name);
         if (result.found_existing) {
+            std.debug.print("huh???\n", .{});
             return RuntimeError.VariableAlreadyDeclared;
         } else {
             result.value_ptr.* = handle;
         }
+        std.debug.print("Set {s}\n", .{name});
         return handle;
     }
 

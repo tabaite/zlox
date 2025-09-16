@@ -90,7 +90,7 @@ pub fn main() !void {
 
             var astParser = parsing.AstParser.new(&iter);
             while (astParser.nextStatement(astAlloc) catch |e| err: {
-                try handleError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
                 break :err null;
             }) |s| {
                 try parsing.printStatement(s, stderrAny);
@@ -106,7 +106,7 @@ pub fn main() !void {
 
             var astParser = parsing.AstParser.new(&iter);
             while (astParser.nextStatement(astAlloc) catch |e| err: {
-                try handleError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
                 break :err null;
             }) |s| {
                 try statementList.append(s);
@@ -121,13 +121,8 @@ pub fn main() !void {
                 try parsing.printExpression(stmt.expr, stderrAny);
                 _ = try stderrAny.write(" - ");
                 const result = evaluator.evaluateNode(astAlloc, stmt.expr) catch |err| e: {
-                    const EvaluationError = evaluation.EvaluationError;
-                    if (err == EvaluationError.IncompatibleTypesForOperands) {
-                        _ = try stderr.write("types are incompatible!\n");
-                    } else if (err == EvaluationError.NoOperationForOperands) {
-                        _ = try stderr.write("could not find a suitable operation for operands!\n");
-                    }
-
+                    try handleRuntimeError(err, stderrAny);
+                    _ = try stderrAny.write(" - ");
                     break :e evaluation.Result{ .literal = .nil };
                 };
 
@@ -141,7 +136,7 @@ pub fn main() !void {
     }
 }
 
-fn handleError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize) !void {
+fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize) !void {
     switch (err) {
         parsing.ParsingError.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
         parsing.ParsingError.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
@@ -155,5 +150,18 @@ fn handleError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usi
     _ = try out.write(source[0..position]);
     _ = try out.write("<HERE>");
     _ = try out.write(source[position..]);
-    return;
+}
+
+fn handleRuntimeError(err: anyerror, out: std.io.AnyWriter) !void {
+    const RuntimeError = runtime.RuntimeError;
+    const EvaluationError = evaluation.EvaluationError;
+    switch (err) {
+        EvaluationError.IncompatibleTypesForOperands => _ = try out.write("types are incompatible!\n"),
+        EvaluationError.NoOperationForOperands => _ = try out.write("could not find a suitable operation for operands!\n"),
+        RuntimeError.OutOfStackBounds => _ = try out.write("oob\n"),
+        RuntimeError.StackOverflow => _ = try out.write("stack OVERFLOW!"),
+        RuntimeError.UndeclaredVariableAccessed => _ = try out.write("tried to access a variable that does not exist within the current scope"),
+        RuntimeError.VariableAlreadyDeclared => _ = try out.write("this variable name has already been declared!"),
+        else => return err,
+    }
 }
