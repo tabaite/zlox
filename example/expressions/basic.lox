@@ -1,8 +1,4 @@
-"Hello " + "world";
-17 * 3 == 51;
-0.2 + 0.1;
-(((((((1243)))))));
-var sex = "heya";
-print(sex, "");
-sex == "heya";
-"im strokin it" == "im strokin it";
+var pi = 3.14159265;
+var radius = 10.25;
+
+pi * radius * radius;
