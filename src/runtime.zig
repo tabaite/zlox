@@ -21,31 +21,6 @@ pub const Type = enum(u8) {
     }
 };
 
-pub const OperatorType = enum(u32) {
-    equality,
-    notEquality,
-    greater,
-    greaterEqual,
-    less,
-    lessEqual,
-    add,
-    subtract,
-    multiply,
-    divide,
-
-    negate,
-    negateBool,
-
-    // temporary
-    print,
-};
-
-pub const Operation = struct {
-    op: OperatorType,
-    operandA: VarHandle,
-    operandB: VarHandle,
-};
-
 // A handle to a variable stored in the IRHandler.
 pub const VarHandle = packed struct {
     handle: u24,
