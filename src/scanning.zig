@@ -140,18 +140,21 @@ pub const TokenIterator = struct {
                 '\n' => self.lineNumber += 1,
 
                 // slash or comments
-                '/' => if (cnext == '/') {
-                    for (i..self.source.len) |j| {
-                        const sscurrent = self.source[j];
-                        if (sscurrent == '\n') {
-                            self.lineNumber += 1;
-                            i = j;
-                            break;
+                '/' => comment: {
+                    if (cnext == '/') {
+                        for (i..self.source.len) |j| {
+                            const sscurrent = self.source[j];
+                            if (sscurrent == '\n') {
+                                self.lineNumber += 1;
+                                i = j;
+                                break :comment;
+                            }
                         }
+                        i = self.source.len;
+                    } else {
+                        self.position = i + 1;
+                        return .{ .tokenType = .slash, .source = null };
                     }
-                } else {
-                    self.position = i + 1;
-                    return .{ .tokenType = .slash, .source = null };
                 },
 
                 // string literals
