@@ -138,7 +138,21 @@ pub const AstParser = struct {
 
     pub fn programTree(self: *AstParser, allocator: std.mem.Allocator) !*Block {
         // The global program scope doesn't include braces around it
-        return self.blockRule(allocator);
+        var list = std.ArrayList(BlockContent).init(allocator);
+        while (self.tryPeek()) |t| {
+            const item = it: {
+                if (t.tokenType == .leftBrace) {
+                    break :it BlockContent{ .block = try self.blockRule(allocator) };
+                } else {
+                    break :it BlockContent{ .stmt = try self.statementRule(allocator) };
+                }
+            };
+
+            try list.append(item);
+        }
+        const block = try allocator.create(Block);
+        block.* = Block{ .contents = list.items };
+        return block;
     }
 
     pub fn nextStatement(self: *AstParser, allocator: std.mem.Allocator) !?Statement {
