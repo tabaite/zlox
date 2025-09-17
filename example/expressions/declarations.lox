@@ -1,0 +1,12 @@
+var pi = 3.14592;
+var radius = 10;
+
+pi * radius * radius; // expected: 314.592
+
+pi = 4;
+
+pi * radius * radius; // expected: 400
+
+radius = 5;
+
+pi * radius * radius; // expected: 100

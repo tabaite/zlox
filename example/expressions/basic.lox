@@ -1,10 +1,7 @@
-var pi = 3.14159265;
-var radius = 10.25;
+var name = "Hello! ";
 
-pi = 4;
+var names = name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name + name;
 
-pi * radius * radius;
+var namesLit = "Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! Hello! ";
 
-pi = 2;
-
-pi * radius * radius;
+names == namesLit;
