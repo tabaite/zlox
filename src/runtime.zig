@@ -85,8 +85,8 @@ pub const VarStack = struct {
             return RuntimeError.OutOfStackBounds;
         }
 
-        const item = self.items[handle.handle];
-        if (item == .string) {
+        const item = &self.items[handle.handle];
+        if (item.* == .string) {
             self.stringAllocator.free(item.string);
         }
 
@@ -102,7 +102,7 @@ pub const VarStack = struct {
             },
             .string => |s| {
                 const str = try self.stringAllocator.dupe(u8, s);
-                item.* = Variable{ .string = str };
+                item.* = .{ .string = str };
             },
         }
     }
@@ -164,7 +164,7 @@ pub const Runtime = struct {
         const result = try self.varRegistry.getOrPut(name);
         if (result.found_existing) {
             const handle = result.value_ptr.*;
-            self.variableStack.set(handle, new);
+            try self.variableStack.set(handle, new);
         } else {
             return RuntimeError.UndeclaredVariableAccessed;
         }

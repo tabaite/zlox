@@ -26,6 +26,13 @@ pub const Evaluator = struct {
 
     pub fn evaluateNode(self: *Evaluator, allocator: Allocator, expression: *parsing.Expression) (Allocator.Error || runtime.RuntimeError || EvaluationError)!Result {
         switch (expression.*) {
+            .assignment => |a| {
+                const val = try self.evaluateNode(allocator, a.value);
+                if (val == .literal) {
+                    try self.runtime.set(a.name, val.literal);
+                }
+                return val;
+            },
             .binary => |b| return self.evaluateBinary(
                 allocator,
                 b.operation,

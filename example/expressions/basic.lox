@@ -1,4 +1,10 @@
 var pi = 3.14159265;
 var radius = 10.25;
 
+pi = 4;
+
+pi * radius * radius;
+
+pi = 2;
+
 pi * radius * radius;

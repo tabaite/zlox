@@ -5,6 +5,7 @@ const std = @import("std");
 // statement      → ( decl | call | expression ) ";"
 // decl           → "var" IDENTIFIER ( "=" expression )?
 // call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
+// assignment     → IDENTIFIER "=" expression
 // expression     → equality
 // equality       → comparison ( ( "!=" | "==" ) comparison )*
 // comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )*
@@ -64,6 +65,10 @@ pub const Expression = union(enum) {
     declaration: struct {
         name: []u8,
         value: ?*Expression,
+    },
+    assignment: struct {
+        name: []u8,
+        value: *Expression,
     },
     functionCall: struct {
         name: []u8,
@@ -214,7 +219,7 @@ pub const AstParser = struct {
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
             .minus => .negate,
-            else => return try self.functionCallOrVariableRule(allocator),
+            else => return try self.functionCallOrVariableOrAssignmentRule(allocator),
         };
 
         self.advance();
@@ -228,7 +233,7 @@ pub const AstParser = struct {
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         const name = self.tryPeek() orelse return self.primaryRule(allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.primaryRule(allocator);
@@ -242,37 +247,47 @@ pub const AstParser = struct {
             return v;
         };
 
-        if (startParen.tokenType != .leftParen) {
-            const v = try allocator.create(Expression);
+        switch (startParen.tokenType) {
+            .leftParen => {
+                self.advance();
+                while (self.tryPeek()) |t| {
+                    if (t.tokenType == .rightParen) {
+                        break;
+                    }
+                    _ = try self.expressionRule(allocator);
+                    const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+                    if (seperator.tokenType != .comma) {
+                        break;
+                    }
+                    self.advance();
+                }
 
-            v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+                const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+                if (endParen.tokenType != .rightParen) {
+                    return ParsingError.ExpectedClosingBrace;
+                }
+                const expr = try allocator.create(Expression);
+                const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
+                expr.* = Expression{ .functionCall = .{ .name = fnName } };
+                self.advance();
+                return expr;
+            },
+            .equal => {
+                self.advance();
+                const val = try self.expressionRule(allocator);
 
-            return v;
+                const expr = try allocator.create(Expression);
+                expr.* = Expression{ .assignment = .{ .name = name.source orelse @constCast("NULL NAME!!!"), .value = val } };
+                return expr;
+            },
+            else => {
+                const v = try allocator.create(Expression);
+
+                v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+
+                return v;
+            },
         }
-
-        self.advance();
-
-        while (self.tryPeek()) |t| {
-            if (t.tokenType == .rightParen) {
-                break;
-            }
-            _ = try self.expressionRule(allocator);
-            const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
-            if (seperator.tokenType != .comma) {
-                break;
-            }
-            self.advance();
-        }
-
-        const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
-        if (endParen.tokenType != .rightParen) {
-            return ParsingError.ExpectedClosingBrace;
-        }
-        const expr = try allocator.create(Expression);
-        const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
-        expr.* = Expression{ .functionCall = .{ .name = fnName } };
-        self.advance();
-        return expr;
     }
 
     fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
@@ -320,6 +335,10 @@ pub fn printStatement(stmt: Statement, out: std.io.AnyWriter) !void {
 
 pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
     switch (expr.*) {
+        .assignment => |a| {
+            try out.print("SET \"{s}\" TO ", .{a.name});
+            try printExpression(a.value, out);
+        },
         .declaration => |d| {
             if (d.value == null) {
                 _ = try out.print("declare \"{s}\"", .{d.name});
