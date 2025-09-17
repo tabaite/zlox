@@ -1,0 +1,8 @@
+var x = 17;
+
+print(
+    recurse(
+        recurse(x-1),
+        recurse(x-2)
+    )
+);

@@ -89,6 +89,13 @@ pub const Evaluator = struct {
                     return EvaluationError.NoOperationForOperands;
                 }
             },
+            .modulo => {
+                if (leftLit == .number and rightLit == .number) {
+                    return .{ .literal = .{ .number = @mod(leftLit.number, rightLit.number) } };
+                } else {
+                    return EvaluationError.NoOperationForOperands;
+                }
+            },
             .greater => {
                 if (leftLit == .number and rightLit == .number) {
                     return .{ .literal = .{ .bool = leftLit.number > rightLit.number } };
@@ -131,6 +138,20 @@ pub const Evaluator = struct {
                     return .{ .literal = .{ .bool = leftLit.number != rightLit.number } };
                 } else if (leftLit == .string and rightLit == .string) {
                     return .{ .literal = .{ .bool = !std.mem.eql(u8, leftLit.string, rightLit.string) } };
+                } else {
+                    return EvaluationError.NoOperationForOperands;
+                }
+            },
+            .bOr => {
+                if (leftLit == .bool and rightLit == .bool) {
+                    return .{ .literal = .{ .bool = leftLit.bool or rightLit.bool } };
+                } else {
+                    return EvaluationError.NoOperationForOperands;
+                }
+            },
+            .bAnd => {
+                if (leftLit == .bool and rightLit == .bool) {
+                    return .{ .literal = .{ .bool = leftLit.bool and rightLit.bool } };
                 } else {
                     return EvaluationError.NoOperationForOperands;
                 }

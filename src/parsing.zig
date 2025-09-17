@@ -6,11 +6,13 @@ const std = @import("std");
 // decl           → "var" IDENTIFIER ( "=" expression )?
 // call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
 // assignment     → IDENTIFIER "=" expression
-// expression     → equality
+// expression     → or
+// or             → and "or" and
+// and            → equality "and" equality
 // equality       → comparison ( ( "!=" | "==" ) comparison )*
 // comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )*
 // term           → factor ( ( "-" | "+" ) factor )*
-// factor         → unary ( ( "/" | "*" ) unary )*
+// factor         → unary ( ( "/" | "*" | "%" | "<<" | ">>" ) unary )*
 // unary          → ( "!" | "-" ) unary
 //                | primary
 // primary        → NUMBER | STRING | "true" | "false" | "nil"
@@ -28,6 +30,8 @@ pub const ParsingError = error{
 pub const BinaryExprType = enum {
     equality,
     notEquality,
+    bOr,
+    bAnd,
     greater,
     greaterEqual,
     less,
@@ -36,6 +40,7 @@ pub const BinaryExprType = enum {
     subtract,
     multiply,
     divide,
+    modulo,
 };
 
 pub const UnaryExprType = enum {
@@ -177,7 +182,7 @@ pub const AstParser = struct {
     }
 
     fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return try self.equalityRule(allocator);
+        return try self.orRule(allocator);
     }
 
     // might be the most atrocious function body i've ever written
@@ -198,6 +203,14 @@ pub const AstParser = struct {
         }
         return expression;
     }
+    fn orRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
+        return self.binaryRule(allocator, matches, andRule);
+    }
+    fn andRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+        const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
+        return self.binaryRule(allocator, matches, equalityRule);
+    }
     fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
         return self.binaryRule(allocator, matches, comparisonRule);
@@ -211,7 +224,7 @@ pub const AstParser = struct {
         return self.binaryRule(allocator, matches, factorRule);
     }
     fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide } };
+        const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
         return self.binaryRule(allocator, matches, unaryRule);
     }
     fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
@@ -396,6 +409,9 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
                 .subtract => try out.write("(- "),
                 .multiply => try out.write("(* "),
                 .divide => try out.write("(/ "),
+                .modulo => try out.write("(% "),
+                .bAnd => try out.write("(and "),
+                .bOr => try out.write("(or "),
             };
             try printExpression(b.left, out);
             _ = try out.write(" ");

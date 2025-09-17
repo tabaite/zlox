@@ -19,6 +19,7 @@ pub const TokenType = enum {
     plus,
     semicolon,
     slash,
+    percent,
     star,
 
     bang,
@@ -214,6 +215,10 @@ pub const TokenIterator = struct {
                     self.position = i + 1;
                     return .{ .tokenType = .star, .source = null };
                 },
+                '%' => {
+                    self.position = i + 1;
+                    return .{ .tokenType = .percent, .source = null };
+                },
 
                 // one/two character tokens
                 '<' => {
@@ -281,6 +286,7 @@ pub fn printToken(token: Token, out: std.io.AnyWriter) !void {
         .semicolon => try out.write("SEMICOLON ; null\n"),
         .star => try out.write("STAR * null\n"),
         .slash => try out.write("SLASH / null\n"),
+        .percent => try out.write("PERCENT % null"),
 
         .kwAnd => try out.write("AND and null\n"),
         .kwClass => try out.write("CLASS class null\n"),

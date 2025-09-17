@@ -1,0 +1,3 @@
+// Operators not included in the book's Lox specification,
+// but generally useful.
+false or (225 % 15 == 0) and (16 == 1 << 4) and (2 >> 1 == 1);
