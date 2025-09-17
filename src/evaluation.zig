@@ -31,7 +31,7 @@ pub const Evaluator = struct {
                 if (val == .literal) {
                     try self.runtime.set(a.name, val.literal);
                 }
-                return val;
+                return .{ .literal = .nil };
             },
             .binary => |b| return self.evaluateBinary(
                 allocator,
