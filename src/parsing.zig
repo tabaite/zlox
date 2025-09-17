@@ -22,6 +22,7 @@ pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
     ExpectedSemicolon,
+    ExpectedOpeningBrace,
     ExpectedClosingBrace,
     ExpectedIdentifier,
     ExpectedExpression,
@@ -61,6 +62,10 @@ pub const Literal = union(Type) {
     bool: bool,
     nil,
 };
+
+pub const Block = struct { contents: []BlockContent };
+
+pub const BlockContent = union(enum) { stmt: Statement, block: *Block };
 
 pub const Statement = struct {
     expr: *Expression,
@@ -131,12 +136,56 @@ pub const AstParser = struct {
     // The function mutates the state of the parser, moving the position forward
     // to the token immediately after the expression it returns.
 
+    pub fn programTree(self: *AstParser, allocator: std.mem.Allocator) !*Block {
+        // The global program scope doesn't include braces around it
+        return self.blockRule(allocator);
+    }
+
     pub fn nextStatement(self: *AstParser, allocator: std.mem.Allocator) !?Statement {
         if (self.tryPeek() == null) {
             return null;
         }
 
         return try self.statementRule(allocator);
+    }
+
+    fn blockRule(self: *AstParser, allocator: std.mem.Allocator) !*Block {
+        const start = self.tryPeek() orelse {
+            const block = try allocator.create(Block);
+            block.* = Block{ .contents = &[_]BlockContent{} };
+            return block;
+        };
+        if (start.tokenType != .leftBrace) {
+            return ParsingError.ExpectedOpeningBrace;
+        }
+
+        self.advance();
+        var list = std.ArrayList(BlockContent).init(allocator);
+        while (self.tryPeek()) |t| {
+            if (t.tokenType == .rightBrace) {
+                break;
+            }
+
+            const item = it: {
+                if (t.tokenType == .leftBrace) {
+                    break :it BlockContent{ .block = try self.blockRule(allocator) };
+                } else {
+                    break :it BlockContent{ .stmt = try self.statementRule(allocator) };
+                }
+            };
+
+            try list.append(item);
+        }
+        const block = try allocator.create(Block);
+        block.* = Block{ .contents = list.items };
+
+        const end = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+        if (end.tokenType != .rightBrace) {
+            return ParsingError.ExpectedClosingBrace;
+        }
+        self.advance();
+
+        return block;
     }
 
     fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !Statement {
@@ -348,7 +397,29 @@ pub const AstParser = struct {
     }
 };
 
-pub fn printStatement(stmt: Statement, out: std.io.AnyWriter) !void {
+pub inline fn printBlock(blk: *Block, out: std.io.AnyWriter) !void {
+    try printBlockI(blk, 0, out);
+}
+
+fn printBlockI(blk: *Block, ident: usize, out: std.io.AnyWriter) !void {
+    for (0..ident * 2) |_| {
+        _ = try out.write(" ");
+    }
+    _ = try out.write("{\n");
+    for (blk.contents) |i| switch (i) {
+        .stmt => |s| try printStatement(s, ident + 1, out),
+        .block => |b| try printBlockI(b, ident + 1, out),
+    };
+    for (0..ident * 2) |_| {
+        _ = try out.write(" ");
+    }
+    _ = try out.write("}\n");
+}
+
+pub fn printStatement(stmt: Statement, ident: usize, out: std.io.AnyWriter) !void {
+    for (0..ident * 2) |_| {
+        _ = try out.write(" ");
+    }
     try printExpression(stmt.expr, out);
     _ = try out.write("\n");
 }

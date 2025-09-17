@@ -89,12 +89,12 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var astParser = parsing.AstParser.new(&iter);
-            while (astParser.nextStatement(astAlloc) catch |e| err: {
+
+            const program = astParser.programTree(astAlloc) catch |e| {
                 try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
-                break :err null;
-            }) |s| {
-                try parsing.printStatement(s, stderrAny);
-            }
+                return;
+            };
+            try parsing.printBlock(program, stderrAny);
         },
         .evaluate => {
             var arena = std.heap.ArenaAllocator.init(gpa);
