@@ -28,8 +28,10 @@ pub const TokenType = enum {
     equalEqual,
     greater,
     greaterEqual,
+    rightShift,
     less,
     lessEqual,
+    leftShift,
 
     identifier,
     string,
@@ -222,12 +224,12 @@ pub const TokenIterator = struct {
 
                 // one/two character tokens
                 '<' => {
-                    self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext != '=') .less else .lessEqual, .source = null };
+                    self.position = if (cnext != '=' and cnext != '<') i + 1 else i + 2;
+                    return .{ .tokenType = if (cnext == '=') .lessEqual else if (cnext == '<') .leftShift else .less, .source = null };
                 },
                 '>' => {
-                    self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext != '=') .greater else .greaterEqual, .source = null };
+                    self.position = if (cnext != '=' and cnext != '>') i + 1 else i + 2;
+                    return .{ .tokenType = if (cnext == '=') .greaterEqual else if (cnext == '>') .rightShift else .greater, .source = null };
                 },
                 '!' => {
                     self.position = if (cnext != '=') i + 1 else i + 2;
