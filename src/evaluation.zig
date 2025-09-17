@@ -24,7 +24,15 @@ pub const Evaluator = struct {
         self.runtime.deinit();
     }
 
-    pub fn evaluateNode(self: *Evaluator, allocator: Allocator, expression: *parsing.Expression) (Allocator.Error || runtime.RuntimeError || EvaluationError)!Result {
+    pub fn evaluateBlock(self: *Evaluator, allocator: Allocator, block: *parsing.Block) !Result {
+        for (block.contents) |c| _ = switch (c) {
+            .stmt => |s| try self.evaluateNode(allocator, s.expr),
+            .block => |b| try self.evaluateBlock(allocator, b),
+        };
+        return .{ .literal = .nil };
+    }
+
+    pub fn evaluateNode(self: *Evaluator, allocator: Allocator, expression: *parsing.Expression) (anyerror || Allocator.Error || runtime.RuntimeError || EvaluationError)!Result {
         switch (expression.*) {
             .assignment => |a| {
                 const val = try self.evaluateNode(allocator, a.value);
@@ -42,7 +50,20 @@ pub const Evaluator = struct {
             .unary => |u| return self.evaluateUnary(u.operation, try self.evaluateNode(allocator, u.expr)),
             .literal => |l| return .{ .literal = l },
             .grouping => |u| return self.evaluateNode(allocator, u.expr),
-            .functionCall => return .{ .literal = .nil },
+            .functionCall => |f| {
+                if (std.mem.eql(u8, f.name, parsing.VERYBADPRINTFUNCTIONNAME)) {
+                    // hack
+                    const stderr = std.io.getStdErr().writer().any();
+                    _ = try stderr.write("PRINTING: ");
+                    for (f.args) |a| {
+                        const result = try self.evaluateNode(allocator, a);
+                        try printResult(result, stderr);
+                        _ = try stderr.write(" ");
+                    }
+                    _ = try stderr.write("\n");
+                }
+                return .{ .literal = .nil };
+            },
             .declaration => |d| return self.evaluateDeclaration(allocator, d.name, d.value),
             .variable => |v| return .{ .literal = try self.getNameAsLiteral(v.name) },
         }

@@ -91,7 +91,7 @@ pub fn main() !void {
             var astParser = parsing.AstParser.new(&iter);
 
             const program = astParser.programTree(astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
                 return;
             };
             try parsing.printBlock(program, stderrAny);
@@ -101,34 +101,20 @@ pub fn main() !void {
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
-            var statementList = std.ArrayList(parsing.Statement).init(gpa);
-            defer statementList.deinit();
-
             var astParser = parsing.AstParser.new(&iter);
-            while (astParser.nextStatement(astAlloc) catch |e| err: {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
-                break :err null;
-            }) |s| {
-                try statementList.append(s);
-            }
 
             _ = try stderr.write("\nevaluating:\n");
+
+            const program = astParser.programTree(astAlloc) catch |e| {
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+                return;
+            };
+            try parsing.printBlock(program, stderrAny);
 
             var evaluator = evaluation.Evaluator.init(try runtime.Runtime.init(astAlloc, gpa));
             defer evaluator.deinit();
 
-            for (statementList.items) |stmt| {
-                try parsing.printExpression(stmt.expr, stderrAny);
-                _ = try stderrAny.write(" - ");
-                const result = evaluator.evaluateNode(astAlloc, stmt.expr) catch |err| e: {
-                    try handleRuntimeError(err, stderrAny);
-                    _ = try stderrAny.write(" - ");
-                    break :e evaluation.Result{ .literal = .nil };
-                };
-
-                try evaluation.printResult(result, stderrAny);
-                _ = try stderrAny.write("\n");
-            }
+            _ = try evaluator.evaluateBlock(astAlloc, program);
         },
         .unknown => {
             try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});
@@ -136,7 +122,7 @@ pub fn main() !void {
     }
 }
 
-fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize) !void {
+fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize, offendingToken: scanning.Token) !void {
     switch (err) {
         parsing.ParsingError.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
         parsing.ParsingError.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
@@ -146,6 +132,7 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position
         else => return err,
     }
     _ = try out.write("token:\n");
+    try scanning.printToken(offendingToken, out);
     _ = try out.write("\n");
     _ = try out.write(source[0..position]);
     _ = try out.write("<HERE>");

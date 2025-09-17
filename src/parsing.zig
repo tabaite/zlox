@@ -28,6 +28,8 @@ pub const ParsingError = error{
     ExpectedExpression,
 };
 
+pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
+
 pub const BinaryExprType = enum {
     equality,
     notEquality,
@@ -350,7 +352,7 @@ pub const AstParser = struct {
                     return ParsingError.ExpectedClosingBrace;
                 }
                 const expr = try allocator.create(Expression);
-                const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
+                const fnName = if (name.tokenType == .kwPrint) @constCast(VERYBADPRINTFUNCTIONNAME) else name.source orelse @constCast("NULL TOKEN !!");
                 expr.* = Expression{ .functionCall = .{ .name = fnName, .args = try allocator.dupe(*Expression, args[0..argNums]) } };
                 self.advance();
                 return expr;
