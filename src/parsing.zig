@@ -72,6 +72,7 @@ pub const Expression = union(enum) {
     },
     functionCall: struct {
         name: []u8,
+        args: []*Expression,
     },
     variable: struct {
         name: []u8,
@@ -250,11 +251,17 @@ pub const AstParser = struct {
         switch (startParen.tokenType) {
             .leftParen => {
                 self.advance();
+
+                var args: [32]*Expression = undefined;
+                var argNums: usize = 0;
                 while (self.tryPeek()) |t| {
                     if (t.tokenType == .rightParen) {
                         break;
                     }
-                    _ = try self.expressionRule(allocator);
+
+                    args[argNums] = try self.expressionRule(allocator);
+                    argNums += 1;
+
                     const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
                     if (seperator.tokenType != .comma) {
                         break;
@@ -268,7 +275,7 @@ pub const AstParser = struct {
                 }
                 const expr = try allocator.create(Expression);
                 const fnName = if (name.tokenType == .kwPrint) @constCast("(built-in) print") else name.source orelse @constCast("NULL TOKEN !!");
-                expr.* = Expression{ .functionCall = .{ .name = fnName } };
+                expr.* = Expression{ .functionCall = .{ .name = fnName, .args = try allocator.dupe(*Expression, args[0..argNums]) } };
                 self.advance();
                 return expr;
             },
@@ -351,7 +358,14 @@ pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
             }
         },
         .variable => |v| try out.print("USE \"{s}\"", .{v.name}),
-        .functionCall => |f| try out.print("CALL \"{s}\"", .{f.name}),
+        .functionCall => |f| {
+            try out.print("CALL \"{s}\" (", .{f.name});
+            for (f.args) |arg| {
+                try printExpression(arg, out);
+                _ = try out.write(", ");
+            }
+            _ = try out.write(")");
+        },
         .literal => |l| switch (l) {
             .number => |num| try out.print("{d}", .{num}),
             .string => |str| try out.print("\"{s}\"", .{str}),
