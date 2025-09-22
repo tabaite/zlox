@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 // Each operation has a component that displays the type of the arguments (literal OR handle).
 // We store this information in the HandledOperand type.
 // For strings, we push the index of the string within the ROM and the length onto the stack, then return a handle to that item.
+// The first qword is the index into rom, and the second is the length.
 
 // Types are erased from bytecode, we check them at compile time.
 // These are only relevant for some operations, some others interpret this their own way.
@@ -40,8 +41,10 @@ pub const Handle = u32;
 pub const Type = enum(u64) {
     nil,
     number,
+    numberLit,
     string,
     bool,
+    boolLit,
     _,
 };
 
@@ -67,15 +70,17 @@ pub const Instruction = struct {
 };
 
 pub const BytecodeGenerator = struct {
-    bytecodeList: std.ArrayList(Instruction),
-    stringBuffer: std.ArrayList(u8),
+    allocator: Allocator,
+    bytecodeList: std.ArrayListUnmanaged(Instruction),
+    stringBuffer: std.ArrayListUnmanaged(u8),
     // Tracks how high the stack is currently in bytes.
     stackHeight: u32,
 
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
-            .bytecodeList = std.ArrayList(Instruction).init(allocator),
-            .stringBuffer = std.ArrayList(u8).init(allocator),
+            .allocator = allocator,
+            .bytecodeList = std.ArrayListUnmanaged(Instruction){},
+            .stringBuffer = std.ArrayListUnmanaged(u8){},
             .stackHeight = 0,
         };
     }
@@ -83,13 +88,13 @@ pub const BytecodeGenerator = struct {
     pub fn pushBinaryOperation(self: *BytecodeGenerator, _: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !void {
         std.debug.print("pushed binary\n", .{});
         const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .print }, .a = a.operand, .b = b.operand, .dest = 0 };
-        try self.bytecodeList.append(item);
+        try self.bytecodeList.append(self.allocator, item);
     }
 
     pub fn pushUnaryOperation(self: *BytecodeGenerator, _: parsing.UnaryExprType, a: HandledOperand) !void {
         std.debug.print("pushed unary\n", .{});
         const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .print }, .a = a.operand, .b = .NULL_HANDLE, .dest = 0 };
-        try self.bytecodeList.append(item);
+        try self.bytecodeList.append(self.allocator, item);
     }
 
     pub fn pushLiteral(self: *BytecodeGenerator, lit: parsing.Literal) !HandledOperand {
@@ -98,23 +103,25 @@ pub const BytecodeGenerator = struct {
                 std.debug.print("pushed \"{s}\" BUT not really since strings are hard\n", .{s});
 
                 // allocate shit ig
+                const strStart = self.stringBuffer.items.len;
+                try self.stringBuffer.appendSlice(self.allocator, s);
 
                 const start = self.stackHeight;
                 self.stackHeight += 2 * @sizeOf(u64);
-                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = 0 }, .b = .NULL_HANDLE, .dest = 0 };
-                try self.bytecodeList.append(ptr);
-                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = 0 }, .b = .NULL_HANDLE, .dest = 0 };
-                try self.bytecodeList.append(len);
+                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = @bitCast(strStart) }, .b = .NULL_HANDLE, .dest = 0 };
+                try self.bytecodeList.append(self.allocator, ptr);
+                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = @bitCast(s.len) }, .b = .NULL_HANDLE, .dest = 0 };
+                try self.bytecodeList.append(self.allocator, len);
 
                 return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
             },
             .number => |n| {
                 std.debug.print("pushed number {d}\n", .{n});
-                return HandledOperand{ .operand = .{ .item = @bitCast(n) }, .type = .number };
+                return HandledOperand{ .operand = .{ .item = @bitCast(n) }, .type = .numberLit };
             },
             .bool => |b| {
                 std.debug.print("pushed {s}\n", .{if (b) "true" else "false"});
-                return HandledOperand{ .operand = .{ .item = @as(u64, @intFromBool(b)) }, .type = .bool };
+                return HandledOperand{ .operand = .{ .item = @as(u64, @intFromBool(b)) }, .type = .boolLit };
             },
             .nil => return .{ .operand = RawOperand.NULL_HANDLE, .type = .nil },
         }
