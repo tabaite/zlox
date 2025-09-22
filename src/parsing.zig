@@ -23,6 +23,8 @@ const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 
+const ParseErrorSet = ParsingError || Allocator.Error || bytecode.CompilationError;
+
 pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
@@ -256,7 +258,7 @@ pub const AstParser = struct {
     }
 
     // might be the most atrocious function body i've ever written
-    fn binaryRule(self: *AstParser, allocator: Allocator, codegen: *CodeGen, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn binaryRule(self: *AstParser, allocator: Allocator, codegen: *CodeGen, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, std.mem.Allocator) ParseErrorSet!*Expression) ParseErrorSet!*Expression {
         var expression = try previousRule(self, codegen, allocator);
         while (self.tryPeek()) |token| {
             const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
@@ -319,7 +321,7 @@ pub const AstParser = struct {
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!*Expression {
         const name = self.tryPeek() orelse return self.primaryRule(codegen, allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.primaryRule(codegen, allocator);
@@ -382,7 +384,7 @@ pub const AstParser = struct {
         }
     }
 
-    fn primaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn primaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!*Expression {
         const token = self.tryPeek() orelse return error.ExpectedToken;
         self.advance();
 
