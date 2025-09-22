@@ -88,20 +88,28 @@ pub fn main() !void {
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
+            var codegen = try lib.bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
-
-            const program = astParser.programTree(astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
-                return;
-            };
-            try parsing.printBlock(program, stderrAny);
+            while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                break :err null;
+            }) |s| {
+                try parsing.printStatement(s, stderrAny);
+            }
         },
         .evaluate => {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
+            var codegen = try lib.bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
+            while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
+                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
+                break :err null;
+            }) |s| {
+                try statementList.append(s);
+            }
 
             _ = try stderr.write("\nevaluating:\n");
 

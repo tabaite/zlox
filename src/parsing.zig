@@ -1,5 +1,6 @@
 const scanning = @import("scanning.zig");
 const std = @import("std");
+const bytecode = @import("bytecode.zig");
 
 // program        → ( statement )* EOF
 // statement      → ( decl | call | expression ) ";"
@@ -17,6 +18,10 @@ const std = @import("std");
 //                | primary
 // primary        → NUMBER | STRING | "true" | "false" | "nil"
 //                | "(" expression ")"
+
+const CodeGen = bytecode.BytecodeGenerator;
+const Allocator = std.mem.Allocator;
+const AnyWriter = std.io.AnyWriter;
 
 pub const ParsingError = error{
     UnexpectedToken,
@@ -157,12 +162,12 @@ pub const AstParser = struct {
         return block;
     }
 
-    pub fn nextStatement(self: *AstParser, allocator: std.mem.Allocator) !?Statement {
+    pub fn nextStatement(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !?Statement {
         if (self.tryPeek() == null) {
             return null;
         }
 
-        return try self.statementRule(allocator);
+        return try self.statementRule(codegen, allocator);
     }
 
     fn blockRule(self: *AstParser, allocator: std.mem.Allocator) !*Block {
@@ -204,8 +209,8 @@ pub const AstParser = struct {
         return block;
     }
 
-    fn statementRule(self: *AstParser, allocator: std.mem.Allocator) !Statement {
-        const expression = try self.declarationRule(allocator);
+    fn statementRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Statement {
+        const expression = try self.declarationRule(codegen, allocator);
         const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             return ParsingError.ExpectedSemicolon;
@@ -215,10 +220,10 @@ pub const AstParser = struct {
         return statement;
     }
 
-    fn declarationRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        const decl = self.tryPeek() orelse return self.expressionRule(allocator);
+    fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
+        const decl = self.tryPeek() orelse return self.expressionRule(codegen, allocator);
         if (decl.tokenType != .kwVar) {
-            return self.expressionRule(allocator);
+            return self.expressionRule(codegen, allocator);
         }
         self.advance();
         const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
@@ -236,7 +241,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                const result = try self.expressionRule(allocator);
+                const result = try self.expressionRule(codegen, allocator);
 
                 const expr = try allocator.create(Expression);
                 expr.* = Expression{ .declaration = .{ .name = name.source orelse @constCast("NULL NAME???"), .value = result } };
@@ -246,76 +251,78 @@ pub const AstParser = struct {
         }
     }
 
-    fn expressionRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
-        return try self.orRule(allocator);
+    fn expressionRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
+        return try self.orRule(codegen, allocator);
     }
 
     // might be the most atrocious function body i've ever written
-    fn binaryRule(self: *AstParser, allocator: std.mem.Allocator, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression) (std.mem.Allocator.Error || ParsingError)!*Expression {
-        var expression = try previousRule(self, allocator);
+    fn binaryRule(self: *AstParser, allocator: Allocator, codegen: *CodeGen, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        var expression = try previousRule(self, codegen, allocator);
         while (self.tryPeek()) |token| {
             const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
 
             self.advance();
 
-            const right = try previousRule(self, allocator);
+            const right = try previousRule(self, codegen, allocator);
 
             const newRoot = try allocator.create(Expression);
 
             newRoot.* = Expression{ .binary = .{ .left = expression, .right = right, .operation = operation } };
+            try codegen.pushBinaryOperation(operation, .NIL, .NIL);
 
             expression = newRoot;
         }
         return expression;
     }
-    fn orRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn orRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
-        return self.binaryRule(allocator, matches, andRule);
+        return self.binaryRule(allocator, codegen, matches, andRule);
     }
-    fn andRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn andRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
-        return self.binaryRule(allocator, matches, equalityRule);
+        return self.binaryRule(allocator, codegen, matches, equalityRule);
     }
-    fn equalityRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn equalityRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
-        return self.binaryRule(allocator, matches, comparisonRule);
+        return self.binaryRule(allocator, codegen, matches, comparisonRule);
     }
-    fn comparisonRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn comparisonRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
-        return self.binaryRule(allocator, matches, termRule);
+        return self.binaryRule(allocator, codegen, matches, termRule);
     }
-    fn termRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn termRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
-        return self.binaryRule(allocator, matches, factorRule);
+        return self.binaryRule(allocator, codegen, matches, factorRule);
     }
-    fn factorRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn factorRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
-        return self.binaryRule(allocator, matches, unaryRule);
+        return self.binaryRule(allocator, codegen, matches, unaryRule);
     }
-    fn unaryRule(self: *AstParser, allocator: std.mem.Allocator) !*Expression {
+    fn unaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !*Expression {
         const opToken = self.tryPeek() orelse return error.ExpectedToken;
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
             .minus => .negate,
-            else => return try self.functionCallOrVariableOrAssignmentRule(allocator),
+            else => return try self.functionCallOrVariableOrAssignmentRule(codegen, allocator),
         };
 
         self.advance();
 
-        const right = try self.unaryRule(allocator);
+        const right = try self.unaryRule(codegen, allocator);
 
         const newRoot = try allocator.create(Expression);
         newRoot.* = Expression{ .unary = .{ .operation = operation, .expr = right } };
+        try codegen.pushUnaryOperation(operation, .NIL);
 
         return newRoot;
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
-        const name = self.tryPeek() orelse return self.primaryRule(allocator);
+    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+        const name = self.tryPeek() orelse return self.primaryRule(codegen, allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
-            return self.primaryRule(allocator);
+            return self.primaryRule(codegen, allocator);
         }
         self.advance();
         const startParen = self.tryPeek() orelse {
@@ -337,7 +344,7 @@ pub const AstParser = struct {
                         break;
                     }
 
-                    args[argNums] = try self.expressionRule(allocator);
+                    args[argNums] = try self.expressionRule(codegen, allocator);
                     argNums += 1;
 
                     const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
@@ -359,7 +366,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                const val = try self.expressionRule(allocator);
+                const val = try self.expressionRule(codegen, allocator);
 
                 const expr = try allocator.create(Expression);
                 expr.* = Expression{ .assignment = .{ .name = name.source orelse @constCast("NULL NAME!!!"), .value = val } };
@@ -375,12 +382,12 @@ pub const AstParser = struct {
         }
     }
 
-    fn primaryRule(self: *AstParser, allocator: std.mem.Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
+    fn primaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) (std.mem.Allocator.Error || ParsingError)!*Expression {
         const token = self.tryPeek() orelse return error.ExpectedToken;
         self.advance();
 
         if (token.tokenType == .leftParen) {
-            const expr = try self.expressionRule(allocator);
+            const expr = try self.expressionRule(codegen, allocator);
 
             // the token will be the token following expr
             const current = self.tryPeek() orelse return error.ExpectedToken;
@@ -409,6 +416,7 @@ pub const AstParser = struct {
             .kwFalse => break :lit Expression{ .literal = .{ .bool = false } },
             else => return error.UnexpectedToken,
         };
+        _ = try codegen.pushLiteral(primary.literal);
         return primary;
     }
 };
@@ -436,11 +444,12 @@ pub fn printStatement(stmt: Statement, ident: usize, out: std.io.AnyWriter) !voi
     for (0..ident * 2) |_| {
         _ = try out.write(" ");
     }
+pub fn printStatement(stmt: Statement, out: AnyWriter) !void {
     try printExpression(stmt.expr, out);
     _ = try out.write("\n");
 }
 
-pub fn printExpression(expr: *Expression, out: std.io.AnyWriter) !void {
+pub fn printExpression(expr: *Expression, out: AnyWriter) !void {
     switch (expr.*) {
         .assignment => |a| {
             try out.print("SET \"{s}\" TO ", .{a.name});
