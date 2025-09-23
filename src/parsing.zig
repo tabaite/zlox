@@ -74,35 +74,6 @@ pub const Literal = union(Type) {
     nil,
 };
 
-pub const Expression = union(enum) {
-    declaration: struct {
-        name: []u8,
-        value: ?*Expression,
-    },
-    assignment: struct {
-        name: []u8,
-        value: *Expression,
-    },
-    functionCall: struct {
-        name: []u8,
-        args: []*Expression,
-    },
-    variable: struct {
-        name: []u8,
-    },
-    literal: Literal,
-    unary: struct {
-        operation: UnaryExprType,
-        expr: *Expression,
-    },
-    binary: struct {
-        operation: BinaryExprType,
-        left: *Expression,
-        right: *Expression,
-    },
-    grouping: struct { expr: *Expression },
-};
-
 const TokenToBinaryExpr = struct {
     key: scanning.TokenType,
     value: BinaryExprType,
@@ -289,9 +260,8 @@ pub const AstParser = struct {
                 return Handle.NIL;
             },
             else => {
-                const v = try allocator.create(Expression);
-
-                v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
+                //const v = try allocator.create(Expression);
+                //v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
 
                 return Handle.NIL;
             },
@@ -326,76 +296,3 @@ pub const AstParser = struct {
         return try codegen.newLiteral(lit);
     }
 };
-
-pub fn printExpression(expr: *Expression, out: AnyWriter) !void {
-    switch (expr.*) {
-        .assignment => |a| {
-            try out.print("SET \"{s}\" TO ", .{a.name});
-            try printExpression(a.value, out);
-        },
-        .declaration => |d| {
-            if (d.value == null) {
-                _ = try out.print("declare \"{s}\"", .{d.name});
-            } else {
-                _ = try out.print("declare \"{s}\" = ", .{d.name});
-
-                // Given a VALID AST, this cannot recurse infinitely, as checking the value of
-                // a declaration starts at the call rule (a declaration cannot be declared to be another declaration)
-                try printExpression(d.value orelse unreachable, out);
-            }
-        },
-        .variable => |v| try out.print("USE \"{s}\"", .{v.name}),
-        .functionCall => |f| {
-            try out.print("CALL \"{s}\" (", .{f.name});
-            for (f.args) |arg| {
-                try printExpression(arg, out);
-                _ = try out.write(", ");
-            }
-            _ = try out.write(")");
-        },
-        .literal => |l| switch (l) {
-            .number => |num| try out.print("{d}", .{num}),
-            .string => |str| try out.print("\"{s}\"", .{str}),
-            .bool => |b| if (b) {
-                _ = try out.write("true");
-            } else {
-                _ = try out.write("false");
-            },
-            .nil => _ = try out.write("nil"),
-        },
-        .unary => |u| {
-            _ = switch (u.operation) {
-                .negate => try out.write("(- "),
-                .negateBool => try out.write("(! "),
-            };
-            try printExpression(u.expr, out);
-            _ = try out.write(")");
-        },
-        .binary => |b| {
-            _ = switch (b.operation) {
-                .equality => try out.write("(== "),
-                .notEquality => try out.write("(!= "),
-                .greater => try out.write("(> "),
-                .greaterEqual => try out.write("(>= "),
-                .less => try out.write("(< "),
-                .lessEqual => try out.write("(<= "),
-                .add => try out.write("(+ "),
-                .subtract => try out.write("(- "),
-                .multiply => try out.write("(* "),
-                .divide => try out.write("(/ "),
-                .modulo => try out.write("(% "),
-                .bAnd => try out.write("(and "),
-                .bOr => try out.write("(or "),
-            };
-            try printExpression(b.left, out);
-            _ = try out.write(" ");
-            try printExpression(b.right, out);
-            _ = try out.write(")");
-        },
-        .grouping => |g| {
-            _ = try out.write("(group ");
-            try printExpression(g.expr, out);
-            _ = try out.write(")");
-        },
-    }
-}

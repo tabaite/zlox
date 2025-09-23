@@ -1,5 +1,4 @@
 pub const scanning = @import("scanning.zig");
 pub const parsing = @import("parsing.zig");
-pub const evaluation = @import("evaluation.zig");
 pub const runtime = @import("runtime.zig");
 pub const bytecode = @import("bytecode.zig");
