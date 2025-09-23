@@ -11,6 +11,7 @@ pub const CompilationError = error{
 // Each operation has a component that displays the type of the arguments (literal OR handle).
 // We store this information in the HandledOperand type.
 // For strings, we push the index of the string within the ROM and the length onto the stack, then return a handle to that item.
+// For bools, we consider it to be true if the number is not 0, and false if it is 0 (similar to C)
 // The first qword is the index into rom, and the second is the length.
 
 // Types are erased from bytecode, we check them at compile time.
@@ -49,7 +50,8 @@ pub const Type = enum(u64) {
     string,
     bool,
     boolLit,
-    _,
+    // this is for user classes, but i'll deal with that later
+    // _,
 };
 
 // Operand, but with a type. Not used in bytecode, but rather for variable tracking and pushing operations.
@@ -89,13 +91,61 @@ pub const BytecodeGenerator = struct {
         };
     }
 
-    pub fn pushBinaryOperation(self: *BytecodeGenerator, _: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !void {
-        std.debug.print("pushed binary\n", .{});
-        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .noop }, .a = a.operand, .b = b.operand, .dest = 0 };
-        try self.bytecodeList.append(self.allocator, item);
+    pub fn registerVariable(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
+        return self.pushOperand(name, initialValue);
     }
 
-    pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !void {
+    pub fn pushOperand(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
+        return h: switch ((initialValue orelse HandledOperand.NIL).type) {
+            .numberLit => {
+                const n = (initialValue orelse unreachable).operand.item;
+
+                std.debug.print("( REGISTER \"{s}\" NUMBER({d}) )\n", .{ name, n });
+                const start = self.stackHeight;
+
+                const floatSz = @sizeOf(f64);
+
+                self.stackHeight += floatSz;
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = 0 };
+                try self.bytecodeList.append(self.allocator, variable);
+
+                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
+            },
+            .number, .bool => return initialValue orelse unreachable,
+            .boolLit => {
+                const bol: u64 = (initialValue orelse unreachable).operand.item;
+
+                std.debug.print("( REGISTER \"{s}\" BOOLEAN({s}) )\n", .{ name, if (bol != 0) "TRUE" else "FALSE" });
+                const start = self.stackHeight;
+
+                const boolSz = @sizeOf(bool);
+
+                self.stackHeight += boolSz;
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = 0 };
+                try self.bytecodeList.append(self.allocator, variable);
+
+                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .bool };
+            },
+            .string => {
+                const strHandle = (initialValue orelse unreachable).operand.item;
+
+                std.debug.print("( REGISTER \"{s}\" STRING_HANDLE({d}) )\n", .{ name, strHandle });
+
+                break :h .{ .operand = .{ .item = strHandle }, .type = .string };
+            },
+            .nil => HandledOperand.NIL,
+        };
+    }
+
+    pub fn pushBinaryOperation(self: *BytecodeGenerator, _: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
+        std.debug.print("pushed binary\n", .{});
+        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
+        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .noop }, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
+        try self.bytecodeList.append(self.allocator, item);
+        return dest;
+    }
+
+    pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
         const Result = struct {
             op: OpCode,
             type: ArgTypes,
@@ -107,17 +157,18 @@ pub const BytecodeGenerator = struct {
                 else => return CompilationError.IncompatibleType,
             },
             .negateBool => switch (a.type) {
-                .number => Result{ .op = .negateBool, .type = .bothHandle },
-                .numberLit => Result{ .op = .negateBool, .type = .bothLiteral },
+                .bool => Result{ .op = .negateBool, .type = .bothHandle },
+                .boolLit => Result{ .op = .negateBool, .type = .bothLiteral },
                 else => return CompilationError.IncompatibleType,
             },
         };
         std.debug.print("pushed unary\n", .{});
-        const item = Instruction{ .op = .{ .argType = res.type, .op = res.op }, .a = a.operand, .b = .NULL_HANDLE, .dest = 0 };
+        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
+        const item = Instruction{ .op = .{ .argType = res.type, .op = res.op }, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
+        return dest;
     }
-
-    pub fn pushLiteral(self: *BytecodeGenerator, lit: parsing.Literal) !HandledOperand {
+    pub fn newLiteral(self: *BytecodeGenerator, lit: parsing.Literal) !HandledOperand {
         switch (lit) {
             .string => |s| {
                 std.debug.print("pushed \"{s}\" BUT not really since strings are hard\n", .{s});
@@ -157,7 +208,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
         },
         .negateNumber => switch (ins.op.argType) {
             .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) )", .{ins.a.item}),
-            .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{@as(f64, @bitCast(ins.a.item))}),
         },
         .pushBytes => try out.print("( PSH LIT({d}) SIZE({d}) )", .{ ins.a.item, ins.b.item }),
     }

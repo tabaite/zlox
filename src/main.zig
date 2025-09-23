@@ -91,11 +91,11 @@ pub fn main() !void {
 
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
-            while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
-                break :err null;
-            }) |s| {
-                try parsing.printStatement(s, stderrAny);
+
+            try astParser.parseAndCompileAll(&codegen, astAlloc);
+
+            for (codegen.bytecodeList.items) |ins| {
+                try bytecode.printInstruction(ins, stderrAny);
             }
         },
         .evaluate => {
@@ -103,36 +103,18 @@ pub fn main() !void {
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
-            var statementList = std.ArrayList(parsing.Statement).init(gpa);
-            defer statementList.deinit();
-
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
-            while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
-                break :err null;
-            }) |s| {
-                try statementList.append(s);
-            }
 
             _ = try stderr.write("\nbytecode:\n");
+
+            try astParser.parseAndCompileAll(&codegen, astAlloc);
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
             }
 
-            _ = try stderr.write("\nevaluating:\n");
-
-            const program = astParser.programTree(astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
-                return;
-            };
-            try parsing.printBlock(program, stderrAny);
-
-            var evaluator = evaluation.Evaluator.init(try runtime.Runtime.init(astAlloc, gpa));
-            defer evaluator.deinit();
-
-            _ = try evaluator.evaluateBlock(astAlloc, program);
+            _ = try stderr.write("\nwe are not evaluating at the moment due to bytecode reworking\n");
         },
         .unknown => {
             try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});
