@@ -35,6 +35,10 @@ pub const OpCode = enum(u30) {
     negateNumber,
     // A: Bool to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
     negateBool,
+    // A, B: Numbers to add, Dest: Where to store the result, Arg Type: Used for A and B
+    add,
+    // A, B: Numbers to subtract, Dest: Where to store the result, Arg Type: Used for A and B
+    subtract,
 };
 
 pub const Operation = struct {
@@ -137,34 +141,63 @@ pub const BytecodeGenerator = struct {
         };
     }
 
-    pub fn pushBinaryOperation(self: *BytecodeGenerator, _: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
+    pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
         std.debug.print("pushed binary\n", .{});
         const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .noop }, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
+        const res: Operation = r: switch (op) {
+            .add => {
+                var argFlag = @intFromEnum(ArgTypes.bothHandle);
+                argFlag |= switch (a.type) {
+                    .number => @intFromEnum(ArgTypes.bothHandle),
+                    .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
+                    else => return CompilationError.IncompatibleType,
+                };
+                argFlag |= switch (b.type) {
+                    .number => @intFromEnum(ArgTypes.bothHandle),
+                    .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
+                    else => return CompilationError.IncompatibleType,
+                };
+                break :r .{ .op = .add, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
+            },
+            .subtract => {
+                var argFlag = @intFromEnum(ArgTypes.bothHandle);
+                argFlag |= switch (a.type) {
+                    .number => @intFromEnum(ArgTypes.bothHandle),
+                    .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
+                    else => return CompilationError.IncompatibleType,
+                };
+                argFlag |= switch (b.type) {
+                    .number => @intFromEnum(ArgTypes.bothHandle),
+                    .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
+                    else => return CompilationError.IncompatibleType,
+                };
+                break :r .{ .op = .subtract, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
+            },
+            else => {
+                break :r .{ .op = .noop, .argType = .bothLiteral };
+            },
+        };
+        const item = Instruction{ .op = res, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
         return dest;
     }
 
     pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
-        const Result = struct {
-            op: OpCode,
-            type: ArgTypes,
-        };
-        const res = switch (op) {
+        const res: Operation = switch (op) {
             .negate => switch (a.type) {
-                .number => Result{ .op = .negateNumber, .type = .bothHandle },
-                .numberLit => Result{ .op = .negateNumber, .type = .bothLiteral },
+                .number => .{ .op = .negateNumber, .argType = .bothHandle },
+                .numberLit => .{ .op = .negateNumber, .argType = .bothLiteral },
                 else => return CompilationError.IncompatibleType,
             },
             .negateBool => switch (a.type) {
-                .bool => Result{ .op = .negateBool, .type = .bothHandle },
-                .boolLit => Result{ .op = .negateBool, .type = .bothLiteral },
+                .bool => .{ .op = .negateBool, .argType = .bothHandle },
+                .boolLit => .{ .op = .negateBool, .argType = .bothLiteral },
                 else => return CompilationError.IncompatibleType,
             },
         };
         std.debug.print("pushed unary\n", .{});
         const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const item = Instruction{ .op = .{ .argType = res.type, .op = res.op }, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
+        const item = Instruction{ .op = res, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
         return dest;
     }
@@ -209,6 +242,18 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
         .negateNumber => switch (ins.op.argType) {
             .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) )", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{@as(f64, @bitCast(ins.a.item))}),
+        },
+        .add => switch (ins.op.argType) {
+            .bothHandle => try out.print("( ADD HANDLE({d}) HANDLE({d}) )", .{ ins.a.item, ins.b.item }),
+            .handleAliteralB => try out.print("( ADD HANDLE({d}) LIT({d}) )", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
+            .bothLiteral => try out.print("( ADD LIT({d}) LIT({d}) )", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
+            .literalAHandleB => try out.print("( ADD LIT({d}) HANDLE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
+        },
+        .subtract => switch (ins.op.argType) {
+            .bothHandle => try out.print("( SUB HANDLE({d}) HANDLE({d}) )", .{ ins.a.item, ins.b.item }),
+            .handleAliteralB => try out.print("( SUB HANDLE({d}) LIT({d}) )", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
+            .bothLiteral => try out.print("( SUB LIT({d}) LIT({d}) )", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
+            .literalAHandleB => try out.print("( SUB LIT({d}) HANDLE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
         },
         // types are erased so yeah
         .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
