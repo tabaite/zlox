@@ -51,6 +51,10 @@ pub const Operation = struct {
     op: OpCode,
 };
 
+// The size of an object pushed onto the stack.
+// Due to dynamic typing, any variable must be able to accomodate any type.
+const ITEM_SIZE = 2 * @sizeOf(u64);
+
 pub const Handle = u32;
 pub const Type = enum(u64) {
     nil,
@@ -69,6 +73,10 @@ pub const HandledOperand = struct {
     type: Type,
 
     pub const NIL: HandledOperand = .{ .operand = .NULL_HANDLE, .type = .nil };
+
+    pub inline fn asHandle(self: HandledOperand) Handle {
+        return @truncate(self.operand.item);
+    }
 };
 
 pub const RawOperand = packed struct {
@@ -113,11 +121,9 @@ pub const BytecodeGenerator = struct {
                 std.debug.print("( REGISTER \"{s}\" NUMBER({d}) )\n", .{ name, n });
                 const start = self.stackHeight;
 
-                const floatSz = @sizeOf(f64);
-
                 // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = self.stackHeight };
-                self.stackHeight += floatSz;
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = ITEM_SIZE }, .dest = self.stackHeight };
+                self.stackHeight += ITEM_SIZE;
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
@@ -129,11 +135,9 @@ pub const BytecodeGenerator = struct {
                 std.debug.print("( REGISTER \"{s}\" BOOLEAN({s}) )\n", .{ name, if (bol != 0) "TRUE" else "FALSE" });
                 const start = self.stackHeight;
 
-                const boolSz = @sizeOf(bool);
-
                 // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = self.stackHeight };
-                self.stackHeight += boolSz;
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = ITEM_SIZE }, .dest = self.stackHeight };
+                self.stackHeight += ITEM_SIZE;
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .bool };
@@ -149,9 +153,12 @@ pub const BytecodeGenerator = struct {
         };
     }
 
-    pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
-        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const res: Operation = r: switch (op) {
+    pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand, dest: Handle) !HandledOperand {
+        const Info = struct {
+            op: Operation,
+            type: Type,
+        };
+        const res: Info = r: switch (op) {
             .add => {
                 var argFlag = @intFromEnum(ArgTypes.bothHandle);
                 argFlag |= switch (a.type) {
@@ -164,7 +171,7 @@ pub const BytecodeGenerator = struct {
                     .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
                     else => return CompilationError.IncompatibleType,
                 };
-                break :r .{ .op = .add, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
+                break :r .{ .op = .{ .op = .add, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .type = .number };
             },
             .subtract => {
                 var argFlag = @intFromEnum(ArgTypes.bothHandle);
@@ -178,35 +185,38 @@ pub const BytecodeGenerator = struct {
                     .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
                     else => return CompilationError.IncompatibleType,
                 };
-                break :r .{ .op = .subtract, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
+                break :r .{ .op = .{ .op = .subtract, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .type = .number };
             },
             else => {
-                break :r .{ .op = .noop, .argType = .bothLiteral };
+                break :r .{ .op = .{ .op = .noop, .argType = .bothLiteral }, .type = .nil };
             },
         };
-        const item = Instruction{ .op = res, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
+        const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = dest };
         try self.bytecodeList.append(self.allocator, item);
-        return dest;
+        return .{ .operand = .{ .item = @as(u64, dest) }, .type = res.type };
     }
 
-    pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
-        const res: Operation = switch (op) {
+    pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand, dest: Handle) !HandledOperand {
+        const Info = struct {
+            op: Operation,
+            type: Type,
+        };
+        const res: Info = switch (op) {
             .negate => switch (a.type) {
-                .number => .{ .op = .negateNumber, .argType = .bothHandle },
-                .numberLit => .{ .op = .negateNumber, .argType = .bothLiteral },
+                .number => .{ .op = .{ .op = .negateNumber, .argType = .bothHandle }, .type = .number },
+                .numberLit => .{ .op = .{ .op = .negateNumber, .argType = .bothLiteral }, .type = .number },
                 else => return CompilationError.IncompatibleType,
             },
             .negateBool => switch (a.type) {
-                .bool => .{ .op = .negateBool, .argType = .bothHandle },
-                .boolLit => .{ .op = .negateBool, .argType = .bothLiteral },
+                .bool => .{ .op = .{ .op = .negateBool, .argType = .bothHandle }, .type = .bool },
+                .boolLit => .{ .op = .{ .op = .negateBool, .argType = .bothLiteral }, .type = .bool },
                 else => return CompilationError.IncompatibleType,
             },
         };
         std.debug.print("pushed unary\n", .{});
-        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const item = Instruction{ .op = res, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
+        const item = Instruction{ .op = res.op, .a = a.operand, .b = .NULL_HANDLE, .dest = dest };
         try self.bytecodeList.append(self.allocator, item);
-        return dest;
+        return .{ .operand = .{ .item = @as(u64, dest) }, .type = res.type };
     }
     pub fn newLiteral(self: *BytecodeGenerator, lit: parsing.Literal) !HandledOperand {
         switch (lit) {
