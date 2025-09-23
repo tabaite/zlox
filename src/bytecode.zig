@@ -5,6 +5,8 @@ const Allocator = std.mem.Allocator;
 
 pub const CompilationError = error{
     IncompatibleType,
+    CannotMoveIntoLiteral,
+    VariableNotDeclared,
 };
 
 // How literals work:
@@ -44,6 +46,8 @@ pub const OpCode = enum(u30) {
     add,
     // A, B: Numbers to subtract, Dest: Where to store the result, Arg Type: Used for A and B
     subtract,
+    // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
+    move,
 };
 
 pub const Operation = struct {
@@ -86,6 +90,7 @@ pub const Instruction = struct {
 
 pub const BytecodeGenerator = struct {
     allocator: Allocator,
+    variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
     stringBuffer: std.ArrayListUnmanaged(u8),
     // Tracks how high the stack is currently in bytes.
@@ -96,12 +101,48 @@ pub const BytecodeGenerator = struct {
             .allocator = allocator,
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
+            .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
             .stackHeight = 0,
         };
     }
+    pub fn deinit(self: *BytecodeGenerator) void {
+        self.variableRegistry.deinit(self.allocator);
+        self.bytecodeList.deinit(self.allocator);
+        self.stringBuffer.deinit(self.allocator);
+    }
 
     pub fn registerVariable(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
-        return self.pushOperand(name, initialValue);
+        const handle = try self.pushOperand(name, initialValue);
+        try self.variableRegistry.put(self.allocator, name, handle);
+        return handle;
+    }
+
+    pub fn getVariable(self: *BytecodeGenerator, name: []u8) !HandledOperand {
+        return self.variableRegistry.get(name) orelse return CompilationError.VariableNotDeclared;
+    }
+
+    pub fn updateVariable(self: *BytecodeGenerator, name: []u8, new: HandledOperand) !HandledOperand {
+        const handle = self.variableRegistry.get(name) orelse return CompilationError.VariableNotDeclared;
+        return try self.moveOperand(new, handle);
+    }
+
+    pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
+        switch (item.type) {
+            .boolLit, .numberLit => return CompilationError.CannotMoveIntoLiteral,
+            else => {},
+        }
+        const argType: ArgTypes = switch (dest.type) {
+            .boolLit, .numberLit => .bothLiteral,
+            else => .bothHandle,
+        };
+        const retType: Type = switch (dest.type) {
+            .boolLit => .bool,
+            .numberLit => .number,
+            else => |s| s,
+        };
+        const ins: Instruction = .{ .op = .{ .argType = argType, .op = .move }, .a = item.operand, .b = RawOperand.NULL_HANDLE, .dest = @truncate(dest.operand.item) };
+        try self.bytecodeList.append(self.allocator, ins);
+        return .{ .type = retType, .operand = dest.operand };
     }
 
     // name is only used for debugging currently
@@ -241,6 +282,10 @@ pub const BytecodeGenerator = struct {
 
 pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
     switch (ins.op.op) {
+        .move => switch (ins.op.argType) {
+            .bothHandle, .handleAliteralB => try out.print("( MOV HANDLE({d}) ", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( MOV LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
+        },
         .noop => _ = try out.write("( NOP )"),
         .negateBool => switch (ins.op.argType) {
             .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
