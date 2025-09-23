@@ -127,7 +127,7 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
-        switch (item.type) {
+        switch (dest.type) {
             .boolLit, .numberLit => return CompilationError.CannotMoveIntoLiteral,
             else => {},
         }
@@ -286,7 +286,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothHandle, .handleAliteralB => try out.print("( MOV HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( MOV LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         },
-        .noop => _ = try out.write("( NOP )"),
+        .noop => _ = try out.write("( NOP "),
         .negateBool => switch (ins.op.argType) {
             .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) ", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
