@@ -23,8 +23,7 @@ const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 
-const Operand = bytecode.HandledOperand;
-const Destination = bytecode.Handle;
+const Handle = bytecode.HandledOperand;
 
 const ParseErrorSet = ParsingError || Allocator.Error || bytecode.CompilationError;
 
@@ -123,16 +122,10 @@ pub const AstParser = struct {
         self.advance();
     }
 
-    // It seems really hacky to have this random function determine the location, but it makes sense since it knows whether
-    // the result is stored in a variable or not.
-    fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Operand {
-        const decl = self.tryPeek() orelse {
-            const dest = try codegen.pushOperand(@constCast("FROM: DECLARATION!!"), null);
-            return self.expressionRule(codegen, dest.asHandle(), allocator);
-        };
+    fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
+        const decl = self.tryPeek() orelse return self.expressionRule(codegen, allocator);
         if (decl.tokenType != .kwVar) {
-            const dest = try codegen.pushOperand(@constCast("FROM: DECLARATION!!"), null);
-            return self.expressionRule(codegen, dest.asHandle(), allocator);
+            return self.expressionRule(codegen, allocator);
         }
         self.advance();
         const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
@@ -144,103 +137,99 @@ pub const AstParser = struct {
         const continuation = (self.tryPeek() orelse return ParsingError.ExpectedSemicolon);
         switch (continuation.tokenType) {
             .semicolon => {
-                return try codegen.registerVariable(decl.source orelse @constCast("idkk"), null);
+                return try codegen.registerVariable(decl.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
             },
             .equal => {
                 self.advance();
+                _ = try self.expressionRule(codegen, allocator);
 
-                // TODO: add variable registry
-                const dest = try codegen.registerVariable(@constCast("initial declaration!!"), null);
-
-                _ = try self.expressionRule(codegen, dest.asHandle(), allocator);
-
-                return dest;
+                return try codegen.registerVariable(decl.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
             },
             else => return ParsingError.ExpectedToken,
         }
     }
 
-    fn expressionRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
-        return try self.orRule(codegen, dest, allocator);
+    fn expressionRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
+        return try self.orRule(codegen, allocator);
     }
 
     // might be the most atrocious function body i've ever written
-    fn binaryRule(self: *AstParser, allocator: Allocator, codegen: *CodeGen, dest: Destination, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, Destination, std.mem.Allocator) ParseErrorSet!Operand) ParseErrorSet!Operand {
-        var expression = try previousRule(self, codegen, dest, allocator);
+    fn binaryRule(self: *AstParser, allocator: Allocator, codegen: *CodeGen, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, std.mem.Allocator) ParseErrorSet!Handle) ParseErrorSet!Handle {
+        var expression = try previousRule(self, codegen, allocator);
         while (self.tryPeek()) |token| {
             const operation = matchTokenToExprOrNull(token.tokenType, matches) orelse break;
 
             self.advance();
 
-            const right = try previousRule(self, codegen, dest, allocator);
+            const right = try previousRule(self, codegen, allocator);
 
-            expression = try codegen.pushBinaryOperation(operation, expression, right, dest);
+            expression = try codegen.pushBinaryOperation(operation, expression, right);
         }
         return expression;
     }
-    fn orRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn orRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
-        return self.binaryRule(allocator, codegen, dest, matches, andRule);
+        return self.binaryRule(allocator, codegen, matches, andRule);
     }
-    fn andRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn andRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
-        return self.binaryRule(allocator, codegen, dest, matches, equalityRule);
+        return self.binaryRule(allocator, codegen, matches, equalityRule);
     }
-    fn equalityRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn equalityRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
-        return self.binaryRule(allocator, codegen, dest, matches, comparisonRule);
+        return self.binaryRule(allocator, codegen, matches, comparisonRule);
     }
-    fn comparisonRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn comparisonRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
-        return self.binaryRule(allocator, codegen, dest, matches, termRule);
+        return self.binaryRule(allocator, codegen, matches, termRule);
     }
-    fn termRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn termRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
-        return self.binaryRule(allocator, codegen, dest, matches, factorRule);
+        return self.binaryRule(allocator, codegen, matches, factorRule);
     }
-    fn factorRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn factorRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
-        return self.binaryRule(allocator, codegen, dest, matches, unaryRule);
+        return self.binaryRule(allocator, codegen, matches, unaryRule);
     }
-    fn unaryRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) !Operand {
+    fn unaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
         const opToken = self.tryPeek() orelse return error.ExpectedToken;
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
             .minus => .negate,
-            else => return try self.functionCallOrVariableOrAssignmentRule(codegen, dest, allocator),
+            else => return try self.functionCallOrVariableOrAssignmentRule(codegen, allocator),
         };
 
         self.advance();
 
-        const right = try self.unaryRule(codegen, dest, allocator);
+        const right = try self.unaryRule(codegen, allocator);
 
-        return try codegen.pushUnaryOperation(operation, right, dest);
+        return try codegen.pushUnaryOperation(operation, right);
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) ParseErrorSet!Operand {
-        const name = self.tryPeek() orelse return self.primaryRule(codegen, dest, allocator);
+    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!Handle {
+        const name = self.tryPeek() orelse return self.primaryRule(codegen, allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
-            return self.primaryRule(codegen, dest, allocator);
+            return self.primaryRule(codegen, allocator);
         }
         self.advance();
         const startParen = self.tryPeek() orelse {
-            return Operand.NIL;
+            return Handle.NIL;
         };
 
         switch (startParen.tokenType) {
             .leftParen => {
                 self.advance();
 
-                var args: [32]Operand = undefined;
+                var args: [32]Handle = undefined;
                 var argNums: usize = 0;
                 while (self.tryPeek()) |t| {
                     if (t.tokenType == .rightParen) {
                         break;
                     }
 
-                    args[argNums] = try self.expressionRule(codegen, dest, allocator);
+                    args[argNums] = try self.expressionRule(codegen, allocator);
                     argNums += 1;
 
                     const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
@@ -255,33 +244,33 @@ pub const AstParser = struct {
                     return ParsingError.ExpectedClosingBrace;
                 }
                 self.advance();
-                return Operand.NIL;
+                return Handle.NIL;
             },
             .equal => {
                 self.advance();
 
                 //TODO: add changing of registered variable
-                _ = try self.expressionRule(codegen, dest, allocator);
+                _ = try self.expressionRule(codegen, allocator);
 
                 //const expr = try allocator.create(Expression);
                 //expr.* = Expression{ .assignment = .{ .name = name.source orelse @constCast("NULL NAME!!!"), .value = val } };
-                return Operand.NIL;
+                return Handle.NIL;
             },
             else => {
                 //const v = try allocator.create(Expression);
                 //v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
 
-                return Operand.NIL;
+                return Handle.NIL;
             },
         }
     }
 
-    fn primaryRule(self: *AstParser, codegen: *CodeGen, dest: Destination, allocator: Allocator) ParseErrorSet!Operand {
+    fn primaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!Handle {
         const token = self.tryPeek() orelse return error.ExpectedToken;
         self.advance();
 
         if (token.tokenType == .leftParen) {
-            const expr = try self.expressionRule(codegen, dest, allocator);
+            const expr = try self.expressionRule(codegen, allocator);
 
             // the token will be the token following expr
             const current = self.tryPeek() orelse return error.ExpectedToken;
