@@ -131,11 +131,11 @@ pub const BytecodeGenerator = struct {
             .boolLit, .numberLit => return CompilationError.CannotMoveIntoLiteral,
             else => {},
         }
-        const argType: ArgTypes = switch (dest.type) {
+        const argType: ArgTypes = switch (item.type) {
             .boolLit, .numberLit => .bothLiteral,
             else => .bothHandle,
         };
-        const retType: Type = switch (dest.type) {
+        const retType: Type = switch (item.type) {
             .boolLit => .bool,
             .numberLit => .number,
             else => |s| s,

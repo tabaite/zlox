@@ -141,9 +141,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                _ = try self.expressionRule(codegen, allocator);
-
-                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
+                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), try self.expressionRule(codegen, allocator));
             },
             else => return ParsingError.ExpectedToken,
         }
