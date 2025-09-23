@@ -14,6 +14,11 @@ pub const CompilationError = error{
 // For bools, we consider it to be true if the number is not 0, and false if it is 0 (similar to C)
 // The first qword is the index into rom, and the second is the length.
 
+// How the destination part of instructions work:
+// We don't want to push something EVERY time we do some basic arithmetic,
+// so the parser will EXPLICITLY provide a handle for us to put things into,
+// rather than us assuming anything. This is because the parser has information we don't.
+
 // Types are erased from bytecode, we check them at compile time.
 // These are only relevant for some operations, some others interpret this their own way.
 pub const ArgTypes = enum(u2) {
@@ -99,6 +104,7 @@ pub const BytecodeGenerator = struct {
         return self.pushOperand(name, initialValue);
     }
 
+    // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
         return h: switch ((initialValue orelse HandledOperand.NIL).type) {
             .numberLit => {
@@ -109,9 +115,9 @@ pub const BytecodeGenerator = struct {
 
                 const floatSz = @sizeOf(f64);
 
-                self.stackHeight += floatSz;
                 // Dest is unused, but we set it to the stack height just for convenience purposes
                 const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = self.stackHeight };
+                self.stackHeight += floatSz;
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
@@ -125,9 +131,9 @@ pub const BytecodeGenerator = struct {
 
                 const boolSz = @sizeOf(bool);
 
-                self.stackHeight += boolSz;
                 // Dest is unused, but we set it to the stack height just for convenience purposes
                 const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = self.stackHeight };
+                self.stackHeight += boolSz;
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .bool };
@@ -144,7 +150,6 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
-        std.debug.print("pushed binary\n", .{});
         const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
         const res: Operation = r: switch (op) {
             .add => {
