@@ -252,18 +252,11 @@ pub const AstParser = struct {
             .equal => {
                 self.advance();
 
-                //TODO: add changing of registered variable
-                _ = try self.expressionRule(codegen, allocator);
-
-                //const expr = try allocator.create(Expression);
-                //expr.* = Expression{ .assignment = .{ .name = name.source orelse @constCast("NULL NAME!!!"), .value = val } };
-                return Handle.NIL;
+                const item = try self.expressionRule(codegen, allocator);
+                return codegen.updateVariable(name.source orelse @constCast("NULL NAME THIS IS A BUG PLEASE REPORT IT NOW!!"), item);
             },
             else => {
-                //const v = try allocator.create(Expression);
-                //v.* = Expression{ .variable = .{ .name = name.source orelse @constCast("NULL???") } };
-
-                return Handle.NIL;
+                return codegen.getVariable(name.source orelse @constCast("uhhhhhhhhh this is awkward"));
             },
         }
     }
