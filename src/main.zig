@@ -8,6 +8,7 @@ const scanning = lib.scanning;
 const parsing = lib.parsing;
 const evaluation = lib.evaluation;
 const runtime = lib.runtime;
+const bytecode = lib.bytecode;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -88,7 +89,7 @@ pub fn main() !void {
             defer arena.deinit();
             const astAlloc = arena.allocator();
 
-            var codegen = try lib.bytecode.BytecodeGenerator.init(astAlloc);
+            var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
             while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
                 try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
@@ -105,13 +106,19 @@ pub fn main() !void {
             var statementList = std.ArrayList(parsing.Statement).init(gpa);
             defer statementList.deinit();
 
-            var codegen = try lib.bytecode.BytecodeGenerator.init(astAlloc);
+            var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
             while (astParser.nextStatement(&codegen, astAlloc) catch |e| err: {
                 try handleParseError(e, stderrAny, astParser.iter.source, astParser.iter.position);
                 break :err null;
             }) |s| {
                 try statementList.append(s);
+            }
+
+            _ = try stderr.write("\nbytecode:\n");
+
+            for (codegen.bytecodeList.items) |ins| {
+                try bytecode.printInstruction(ins, stderrAny);
             }
 
             _ = try stderr.write("\nevaluating:\n");
