@@ -6,7 +6,6 @@ const builtin = @import("builtin");
 const lib = @import("libzlox");
 const scanning = lib.scanning;
 const parsing = lib.parsing;
-const evaluation = lib.evaluation;
 const runtime = lib.runtime;
 const bytecode = lib.bytecode;
 
@@ -140,10 +139,7 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position
 
 fn handleRuntimeError(err: anyerror, out: std.io.AnyWriter) !void {
     const RuntimeError = runtime.RuntimeError;
-    const EvaluationError = evaluation.EvaluationError;
     switch (err) {
-        EvaluationError.IncompatibleTypesForOperands => _ = try out.write("types are incompatible!\n"),
-        EvaluationError.NoOperationForOperands => _ = try out.write("could not find a suitable operation for operands!\n"),
         RuntimeError.OutOfStackBounds => _ = try out.write("oob\n"),
         RuntimeError.StackOverflow => _ = try out.write("stack OVERFLOW!"),
         RuntimeError.UndeclaredVariableAccessed => _ = try out.write("tried to access a variable that does not exist within the current scope"),
