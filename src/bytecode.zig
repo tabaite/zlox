@@ -110,7 +110,8 @@ pub const BytecodeGenerator = struct {
                 const floatSz = @sizeOf(f64);
 
                 self.stackHeight += floatSz;
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = 0 };
+                // Dest is unused, but we set it to the stack height just for convenience purposes
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = self.stackHeight };
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
@@ -125,7 +126,8 @@ pub const BytecodeGenerator = struct {
                 const boolSz = @sizeOf(bool);
 
                 self.stackHeight += boolSz;
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = 0 };
+                // Dest is unused, but we set it to the stack height just for convenience purposes
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = self.stackHeight };
                 try self.bytecodeList.append(self.allocator, variable);
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .bool };
@@ -236,27 +238,28 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
     switch (ins.op.op) {
         .noop => _ = try out.write("( NOP )"),
         .negateBool => switch (ins.op.argType) {
-            .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) )", .{ins.a.item}),
-            .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) )", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
+            .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) ", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
         },
         .negateNumber => switch (ins.op.argType) {
-            .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) )", .{ins.a.item}),
-            .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{@as(f64, @bitCast(ins.a.item))}),
+            .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) ", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
         .add => switch (ins.op.argType) {
-            .bothHandle => try out.print("( ADD HANDLE({d}) HANDLE({d}) )", .{ ins.a.item, ins.b.item }),
-            .handleAliteralB => try out.print("( ADD HANDLE({d}) LIT({d}) )", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
-            .bothLiteral => try out.print("( ADD LIT({d}) LIT({d}) )", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
-            .literalAHandleB => try out.print("( ADD LIT({d}) HANDLE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
+            .bothHandle => try out.print("( ADD HANDLE({d}) HANDLE({d}) ", .{ ins.a.item, ins.b.item }),
+            .handleAliteralB => try out.print("( ADD HANDLE({d}) LIT({d}) ", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
+            .bothLiteral => try out.print("( ADD LIT({d}) LIT({d}) ", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
+            .literalAHandleB => try out.print("( ADD LIT({d}) HANDLE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
         },
         .subtract => switch (ins.op.argType) {
-            .bothHandle => try out.print("( SUB HANDLE({d}) HANDLE({d}) )", .{ ins.a.item, ins.b.item }),
-            .handleAliteralB => try out.print("( SUB HANDLE({d}) LIT({d}) )", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
-            .bothLiteral => try out.print("( SUB LIT({d}) LIT({d}) )", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
-            .literalAHandleB => try out.print("( SUB LIT({d}) HANDLE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
+            .bothHandle => try out.print("( SUB HANDLE({d}) HANDLE({d}) ", .{ ins.a.item, ins.b.item }),
+            .handleAliteralB => try out.print("( SUB HANDLE({d}) LIT({d}) ", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
+            .bothLiteral => try out.print("( SUB LIT({d}) LIT({d}) ", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
+            .literalAHandleB => try out.print("( SUB LIT({d}) HANDLE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
         },
         // types are erased so yeah
-        .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
+        .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
     }
+    try out.print("DEST({d}) )", .{ins.dest});
     try out.writeByte('\n');
 }
