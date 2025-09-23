@@ -137,13 +137,13 @@ pub const AstParser = struct {
         const continuation = (self.tryPeek() orelse return ParsingError.ExpectedSemicolon);
         switch (continuation.tokenType) {
             .semicolon => {
-                return try codegen.registerVariable(decl.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
+                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
             },
             .equal => {
                 self.advance();
                 _ = try self.expressionRule(codegen, allocator);
 
-                return try codegen.registerVariable(decl.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
+                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
             },
             else => return ParsingError.ExpectedToken,
         }
