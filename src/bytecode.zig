@@ -3,6 +3,10 @@ const std = @import("std");
 const parsing = @import("parsing.zig");
 const Allocator = std.mem.Allocator;
 
+pub const CompilationError = error{
+    IncompatibleType,
+};
+
 // How literals work:
 // Each operation has a component that displays the type of the arguments (literal OR handle).
 // We store this information in the HandledOperand type.
@@ -22,14 +26,14 @@ pub const ArgTypes = enum(u2) {
 
 pub const OpCode = enum(u30) {
     // Just for now!
-    print,
-    // A: Boolean to be pushed (last bit), B: Unused, Dest: Unused, Arg Type: Unused
-    pushBoolLiteral,
-    // A: Number to be pushed, B: Unused, Dest: Unused, Arg Type: Unused
-    pushNumberLiteral,
+    noop,
     // Used for pushing the index/length of string literals.
-    // A: Unsigned int to be pushed, B: Unused, Dest: Unused, Arg Type: Unused
-    pushUintLiteral,
+    // A: Bytes to be pushed, B: Number of bytes to push (MAX 8), Dest: Unused, Arg Type: Unused
+    pushBytes,
+    // A: Number to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
+    negateNumber,
+    // A: Bool to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
+    negateBool,
 };
 
 pub const Operation = struct {
@@ -87,13 +91,29 @@ pub const BytecodeGenerator = struct {
 
     pub fn pushBinaryOperation(self: *BytecodeGenerator, _: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !void {
         std.debug.print("pushed binary\n", .{});
-        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .print }, .a = a.operand, .b = b.operand, .dest = 0 };
+        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .noop }, .a = a.operand, .b = b.operand, .dest = 0 };
         try self.bytecodeList.append(self.allocator, item);
     }
 
-    pub fn pushUnaryOperation(self: *BytecodeGenerator, _: parsing.UnaryExprType, a: HandledOperand) !void {
+    pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !void {
+        const Result = struct {
+            op: OpCode,
+            type: ArgTypes,
+        };
+        const res = switch (op) {
+            .negate => switch (a.type) {
+                .number => Result{ .op = .negateNumber, .type = .bothHandle },
+                .numberLit => Result{ .op = .negateNumber, .type = .bothLiteral },
+                else => return CompilationError.IncompatibleType,
+            },
+            .negateBool => switch (a.type) {
+                .number => Result{ .op = .negateBool, .type = .bothHandle },
+                .numberLit => Result{ .op = .negateBool, .type = .bothLiteral },
+                else => return CompilationError.IncompatibleType,
+            },
+        };
         std.debug.print("pushed unary\n", .{});
-        const item = Instruction{ .op = .{ .argType = .bothLiteral, .op = .print }, .a = a.operand, .b = .NULL_HANDLE, .dest = 0 };
+        const item = Instruction{ .op = .{ .argType = res.type, .op = res.op }, .a = a.operand, .b = .NULL_HANDLE, .dest = 0 };
         try self.bytecodeList.append(self.allocator, item);
     }
 
@@ -108,9 +128,9 @@ pub const BytecodeGenerator = struct {
 
                 const start = self.stackHeight;
                 self.stackHeight += 2 * @sizeOf(u64);
-                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = @bitCast(strStart) }, .b = .NULL_HANDLE, .dest = 0 };
+                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
                 try self.bytecodeList.append(self.allocator, ptr);
-                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushUintLiteral }, .a = .{ .item = @bitCast(s.len) }, .b = .NULL_HANDLE, .dest = 0 };
+                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = @bitCast(s.len) }, .b = .{ .item = 8 }, .dest = 0 };
                 try self.bytecodeList.append(self.allocator, len);
 
                 return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
@@ -127,3 +147,19 @@ pub const BytecodeGenerator = struct {
         }
     }
 };
+
+pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
+    switch (ins.op.op) {
+        .noop => _ = try out.write("( NOP )"),
+        .negateBool => switch (ins.op.argType) {
+            .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) )", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) )", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
+        },
+        .negateNumber => switch (ins.op.argType) {
+            .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) )", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{ins.a.item}),
+        },
+        .pushBytes => try out.print("( PSH LIT({d}) SIZE({d}) )", .{ ins.a.item, ins.b.item }),
+    }
+    try out.writeByte('\n');
+}

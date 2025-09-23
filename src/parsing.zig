@@ -315,7 +315,7 @@ pub const AstParser = struct {
 
         const newRoot = try allocator.create(Expression);
         newRoot.* = Expression{ .unary = .{ .operation = operation, .expr = right } };
-        try codegen.pushUnaryOperation(operation, .NIL);
+        try codegen.pushUnaryOperation(operation, .{ .operand = .{ .item = 676767 }, .type = .number });
 
         return newRoot;
     }
