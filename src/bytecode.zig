@@ -210,7 +210,8 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) )", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) )", .{@as(f64, @bitCast(ins.a.item))}),
         },
-        .pushBytes => try out.print("( PSH LIT({d}) SIZE({d}) )", .{ ins.a.item, ins.b.item }),
+        // types are erased so yeah
+        .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) )", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
     }
     try out.writeByte('\n');
 }
