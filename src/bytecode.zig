@@ -54,6 +54,10 @@ pub const OpCode = enum(u30) {
     eq,
     // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
     neq,
+    // A, B: Bools to or, Dest: Where to store the result, Arg Type: Used for A and B
+    bOr,
+    // A, B: Bools to and, Dest: Where to store the result, Arg Type: Used for A and B
+    bAnd,
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
     move,
 };

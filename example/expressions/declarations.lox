@@ -5,7 +5,7 @@ pi * radius * radius; // expected: 314.592
 
 pi = 4;
 
-pi * radius * radius; // expected: 400
+(pi * radius * radius) == 314.592; // expected: false (400 != 314.592)
 
 radius = 5;
 
