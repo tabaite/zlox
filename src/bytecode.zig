@@ -46,6 +46,10 @@ pub const OpCode = enum(u30) {
     add,
     // A, B: Numbers to subtract, Dest: Where to store the result, Arg Type: Used for A and B
     subtract,
+    // A, B: Numbers to multiply, Dest: Where to store the result, Arg Type: Used for A and B
+    multiply,
+    // A, B: Numbers to divide, Dest: Where to store the result, Arg Type: Used for A and B
+    divide,
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
     move,
 };
@@ -146,12 +150,12 @@ pub const BytecodeGenerator = struct {
     }
 
     // name is only used for debugging currently
-    pub fn pushOperand(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
+    pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, initialValue: ?HandledOperand) !HandledOperand {
         return h: switch ((initialValue orelse HandledOperand.NIL).type) {
-            .numberLit => {
-                const n = (initialValue orelse unreachable).operand.item;
+            .numberLit, .number => |ty| {
+                const n = if (ty == .numberLit) (initialValue orelse unreachable).operand.item else 0;
 
-                std.debug.print("( REGISTER \"{s}\" NUMBER({d}) )\n", .{ name, n });
+                std.debug.print("( REGISTER \"{s}\" NUMBER({d}) )\n", .{ debugName, n });
                 const start = self.stackHeight;
 
                 const floatSz = @sizeOf(f64);
@@ -163,11 +167,10 @@ pub const BytecodeGenerator = struct {
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
             },
-            .number, .bool => return initialValue orelse unreachable,
-            .boolLit => {
-                const bol: u64 = (initialValue orelse unreachable).operand.item;
+            .boolLit, .bool => |ty| {
+                const bol: u64 = if (ty == .boolLit) (initialValue orelse unreachable).operand.item else 0;
 
-                std.debug.print("( REGISTER \"{s}\" BOOLEAN({s}) )\n", .{ name, if (bol != 0) "TRUE" else "FALSE" });
+                std.debug.print("( REGISTER \"{s}\" BOOLEAN({s}) )\n", .{ debugName, if (bol != 0) "TRUE" else "FALSE" });
                 const start = self.stackHeight;
 
                 const boolSz = @sizeOf(bool);
@@ -182,7 +185,7 @@ pub const BytecodeGenerator = struct {
             .string => {
                 const strHandle = (initialValue orelse unreachable).operand.item;
 
-                std.debug.print("( REGISTER \"{s}\" STRING_HANDLE({d}) )\n", .{ name, strHandle });
+                std.debug.print("( REGISTER \"{s}\" STRING_HANDLE({d}) )\n", .{ debugName, strHandle });
 
                 break :h .{ .operand = .{ .item = strHandle }, .type = .string };
             },
@@ -192,38 +195,26 @@ pub const BytecodeGenerator = struct {
 
     pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
         const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const res: Operation = r: switch (op) {
-            .add => {
-                var argFlag = @intFromEnum(ArgTypes.bothHandle);
-                argFlag |= switch (a.type) {
-                    .number => @intFromEnum(ArgTypes.bothHandle),
-                    .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
-                    else => return CompilationError.IncompatibleType,
-                };
-                argFlag |= switch (b.type) {
-                    .number => @intFromEnum(ArgTypes.bothHandle),
-                    .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
-                    else => return CompilationError.IncompatibleType,
-                };
-                break :r .{ .op = .add, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
-            },
-            .subtract => {
-                var argFlag = @intFromEnum(ArgTypes.bothHandle);
-                argFlag |= switch (a.type) {
-                    .number => @intFromEnum(ArgTypes.bothHandle),
-                    .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
-                    else => return CompilationError.IncompatibleType,
-                };
-                argFlag |= switch (b.type) {
-                    .number => @intFromEnum(ArgTypes.bothHandle),
-                    .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
-                    else => return CompilationError.IncompatibleType,
-                };
-                break :r .{ .op = .subtract, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
-            },
-            else => {
-                break :r .{ .op = .noop, .argType = .bothLiteral };
-            },
+        const res: Operation = r: {
+            const opType: OpCode = switch (op) {
+                .add => .add,
+                .subtract => .subtract,
+                .multiply => .multiply,
+                .divide => .divide,
+                else => break :r .{ .op = .noop, .argType = .bothLiteral },
+            };
+            var argFlag = @intFromEnum(ArgTypes.bothHandle);
+            argFlag |= switch (a.type) {
+                .number => @intFromEnum(ArgTypes.bothHandle),
+                .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
+                else => return CompilationError.IncompatibleType,
+            };
+            argFlag |= switch (b.type) {
+                .number => @intFromEnum(ArgTypes.bothHandle),
+                .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
+                else => return CompilationError.IncompatibleType,
+            };
+            break :r .{ .op = opType, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
         };
         const item = Instruction{ .op = res, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
@@ -295,20 +286,23 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
-        .add => switch (ins.op.argType) {
-            .bothHandle => try out.print("( ADD HANDLE({d}) HANDLE({d}) ", .{ ins.a.item, ins.b.item }),
-            .handleAliteralB => try out.print("( ADD HANDLE({d}) LIT({d}) ", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
-            .bothLiteral => try out.print("( ADD LIT({d}) LIT({d}) ", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
-            .literalAHandleB => try out.print("( ADD LIT({d}) HANDLE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
-        },
-        .subtract => switch (ins.op.argType) {
-            .bothHandle => try out.print("( SUB HANDLE({d}) HANDLE({d}) ", .{ ins.a.item, ins.b.item }),
-            .handleAliteralB => try out.print("( SUB HANDLE({d}) LIT({d}) ", .{ ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
-            .bothLiteral => try out.print("( SUB LIT({d}) LIT({d}) ", .{ @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
-            .literalAHandleB => try out.print("( SUB LIT({d}) HANDLE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), ins.b.item }),
-        },
         // types are erased so yeah
         .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
+        else => {
+            const name = switch (ins.op.op) {
+                .add => "ADD",
+                .subtract => "SUB",
+                .multiply => "MUL",
+                .divide => "DIV",
+                else => @panic("ahhhh what the hell"),
+            };
+            switch (ins.op.argType) {
+                .bothHandle => try out.print("( {s} HANDLE({d}) HANDLE({d}) ", .{ name, ins.a.item, ins.b.item }),
+                .handleAliteralB => try out.print("( {s} HANDLE({d}) LIT({d}) ", .{ name, ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
+                .bothLiteral => try out.print("( {s} LIT({d}) LIT({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
+                .literalAHandleB => try out.print("( {s} LIT({d}) HANDLE({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), ins.b.item }),
+            }
+        },
     }
     try out.print("DEST({d}) )", .{ins.dest});
     try out.writeByte('\n');
