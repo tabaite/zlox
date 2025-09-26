@@ -50,6 +50,10 @@ pub const OpCode = enum(u30) {
     multiply,
     // A, B: Numbers to divide, Dest: Where to store the result, Arg Type: Used for A and B
     divide,
+    // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
+    eq,
+    // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
+    neq,
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
     move,
 };
@@ -151,37 +155,9 @@ pub const BytecodeGenerator = struct {
 
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, initialValue: ?HandledOperand) !HandledOperand {
+        // This can store any (built-in) type.
+        const variableSize = 8;
         return h: switch ((initialValue orelse HandledOperand.NIL).type) {
-            .numberLit, .number => |ty| {
-                const n = if (ty == .numberLit) (initialValue orelse unreachable).operand.item else 0;
-
-                std.debug.print("( REGISTER \"{s}\" NUMBER({d}) )\n", .{ debugName, n });
-                const start = self.stackHeight;
-
-                const floatSz = @sizeOf(f64);
-
-                // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = floatSz }, .dest = self.stackHeight };
-                self.stackHeight += floatSz;
-                try self.bytecodeList.append(self.allocator, variable);
-
-                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
-            },
-            .boolLit, .bool => |ty| {
-                const bol: u64 = if (ty == .boolLit) (initialValue orelse unreachable).operand.item else 0;
-
-                std.debug.print("( REGISTER \"{s}\" BOOLEAN({s}) )\n", .{ debugName, if (bol != 0) "TRUE" else "FALSE" });
-                const start = self.stackHeight;
-
-                const boolSz = @sizeOf(bool);
-
-                // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = bol }, .b = .{ .item = boolSz }, .dest = self.stackHeight };
-                self.stackHeight += boolSz;
-                try self.bytecodeList.append(self.allocator, variable);
-
-                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .bool };
-            },
             .string => {
                 const strHandle = (initialValue orelse unreachable).operand.item;
 
@@ -190,35 +166,71 @@ pub const BytecodeGenerator = struct {
                 break :h .{ .operand = .{ .item = strHandle }, .type = .string };
             },
             .nil => HandledOperand.NIL,
+            else => |ty| {
+                const n = if (ty == .numberLit or ty == .boolLit) (initialValue orelse unreachable).operand.item else 0;
+
+                const start = self.stackHeight;
+
+                // Dest is unused, but we set it to the stack height just for convenience purposes
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
+                self.stackHeight += variableSize;
+                try self.bytecodeList.append(self.allocator, variable);
+
+                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
+            },
         };
     }
 
     pub fn pushBinaryOperation(self: *BytecodeGenerator, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
-        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
-        const res: Operation = r: {
-            const opType: OpCode = switch (op) {
-                .add => .add,
-                .subtract => .subtract,
-                .multiply => .multiply,
-                .divide => .divide,
-                else => break :r .{ .op = .noop, .argType = .bothLiteral },
+        const InsInfo = struct {
+            op: Operation,
+            dest: HandledOperand,
+        };
+        const OpInfo = struct {
+            op: OpCode,
+            type: Type,
+        };
+        const res: InsInfo = r: {
+            const info: OpInfo = switch (op) {
+                .add => .{ .op = .add, .type = .number },
+                .subtract => .{ .op = .subtract, .type = .number },
+                .multiply => .{ .op = .multiply, .type = .number },
+                .divide => .{ .op = .divide, .type = .number },
+                .notEquality => .{ .op = .neq, .type = .number },
+                .equality => .{ .op = .eq, .type = .number },
+                else => break :r .{ .op = .{ .op = .noop, .argType = .bothLiteral }, .dest = .NIL },
             };
+            const aTypeDecayed: Type = switch (a.type) {
+                .numberLit => .number,
+                .boolLit => .bool,
+                else => |t| t,
+            };
+            const bTypeDecayed: Type = switch (a.type) {
+                .numberLit => .number,
+                .boolLit => .bool,
+                else => |t| t,
+            };
+
+            if (aTypeDecayed != info.type or bTypeDecayed != info.type) {
+                return CompilationError.IncompatibleType;
+            }
+
             var argFlag = @intFromEnum(ArgTypes.bothHandle);
+
             argFlag |= switch (a.type) {
-                .number => @intFromEnum(ArgTypes.bothHandle),
-                .numberLit => @intFromEnum(ArgTypes.literalAHandleB),
-                else => return CompilationError.IncompatibleType,
+                .numberLit, .boolLit => @intFromEnum(ArgTypes.literalAHandleB),
+                else => @intFromEnum(ArgTypes.bothHandle),
             };
             argFlag |= switch (b.type) {
-                .number => @intFromEnum(ArgTypes.bothHandle),
-                .numberLit => @intFromEnum(ArgTypes.handleAliteralB),
-                else => return CompilationError.IncompatibleType,
+                .numberLit, .boolLit => @intFromEnum(ArgTypes.handleAliteralB),
+                else => @intFromEnum(ArgTypes.bothHandle),
             };
-            break :r .{ .op = opType, .argType = @as(ArgTypes, @enumFromInt(argFlag)) };
+            const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
+            break :r .{ .op = .{ .op = info.op, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .dest = dest };
         };
-        const item = Instruction{ .op = res, .a = a.operand, .b = b.operand, .dest = @truncate(dest.operand.item) };
+        const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = @truncate(res.dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
-        return dest;
+        return res.dest;
     }
 
     pub fn pushUnaryOperation(self: *BytecodeGenerator, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
@@ -294,6 +306,8 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
                 .subtract => "SUB",
                 .multiply => "MUL",
                 .divide => "DIV",
+                .neq => "NEQ",
+                .eq => "EQL",
                 else => @panic("ahhhh what the hell"),
             };
             switch (ins.op.argType) {
