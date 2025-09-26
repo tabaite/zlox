@@ -130,8 +130,15 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn updateVariable(self: *BytecodeGenerator, name: []u8, new: HandledOperand) !HandledOperand {
-        const handle = self.variableRegistry.get(name) orelse return CompilationError.VariableNotDeclared;
-        return try self.moveOperand(new, handle);
+        const handle = self.variableRegistry.getPtr(name) orelse unreachable;
+        const oldType = handle.type;
+        handle.type = switch (new.type) {
+            .boolLit => .bool,
+            .numberLit => .number,
+            else => |s| s,
+        };
+        errdefer handle.type = oldType;
+        return try self.moveOperand(new, handle.*);
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
