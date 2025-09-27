@@ -48,6 +48,8 @@ pub const OpCode = enum(u30) {
     subtract,
     // A, B: Numbers to multiply, Dest: Where to store the result, Arg Type: Used for A and B
     multiply,
+    // A, B: Numbers to modulo, Dest: Where to store the result, Arg Type: Used for A and B
+    modulo,
     // A, B: Numbers to divide, Dest: Where to store the result, Arg Type: Used for A and B
     divide,
     // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
@@ -212,6 +214,7 @@ pub const BytecodeGenerator = struct {
                 .add => .{ .op = .add, .argType = .number, .retType = .number },
                 .subtract => .{ .op = .subtract, .argType = .number, .retType = .number },
                 .multiply => .{ .op = .multiply, .argType = .number, .retType = .number },
+                .modulo => .{ .op = .modulo, .argType = .number, .retType = .number },
                 .divide => .{ .op = .divide, .argType = .number, .retType = .number },
                 .notEquality => .{ .op = .neq, .argType = .number, .retType = .bool },
                 .equality => .{ .op = .eq, .argType = .number, .retType = .bool },
@@ -326,6 +329,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
                 .subtract => "SUB",
                 .multiply => "MUL",
                 .divide => "DIV",
+                .modulo => "MOD",
                 .neq => "NEQ",
                 .eq => "EQL",
                 .bAnd => "AND",
