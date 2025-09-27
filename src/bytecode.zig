@@ -27,7 +27,7 @@ pub const ArgTypes = enum(u2) {
     // if the right bit is set, it's a literal
     // if the left bit is set, it's a literal
     bothHandle = 0,
-    handleAliteralB = 1,
+    handleALiteralB = 1,
     literalAHandleB = 2,
     bothLiteral = 3,
 };
@@ -245,7 +245,7 @@ pub const BytecodeGenerator = struct {
                 else => @intFromEnum(ArgTypes.bothHandle),
             };
             argFlag |= switch (b.type) {
-                .numberLit, .boolLit => @intFromEnum(ArgTypes.handleAliteralB),
+                .numberLit, .boolLit => @intFromEnum(ArgTypes.handleALiteralB),
                 else => @intFromEnum(ArgTypes.bothHandle),
             };
 
@@ -310,16 +310,16 @@ pub const BytecodeGenerator = struct {
 pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
     switch (ins.op.op) {
         .move => switch (ins.op.argType) {
-            .bothHandle, .handleAliteralB => try out.print("( MOV HANDLE({d}) ", .{ins.a.item}),
+            .bothHandle, .handleALiteralB => try out.print("( MOV HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( MOV LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         },
         .noop => _ = try out.write("( NOP "),
         .negateBool => switch (ins.op.argType) {
-            .bothHandle, .handleAliteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
+            .bothHandle, .handleALiteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) ", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
         },
         .negateNumber => switch (ins.op.argType) {
-            .bothHandle, .handleAliteralB => try out.print("( NEG HANDLE({d}) ", .{ins.a.item}),
+            .bothHandle, .handleALiteralB => try out.print("( NEG HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
         // types are erased so yeah
@@ -343,7 +343,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             };
             switch (ins.op.argType) {
                 .bothHandle => try out.print("( {s} HANDLE({d}) HANDLE({d}) ", .{ name, ins.a.item, ins.b.item }),
-                .handleAliteralB => try out.print("( {s} HANDLE({d}) LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ name, ins.a.item, @as(f64, @bitCast(ins.b.item)), if (ins.b.item != 0) "TRUE" else "FALSE", ins.b.item }),
+                .handleALiteralB => try out.print("( {s} HANDLE({d}) LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ name, ins.a.item, @as(f64, @bitCast(ins.b.item)), if (ins.b.item != 0) "TRUE" else "FALSE", ins.b.item }),
                 .bothLiteral => try out.print("( {s} LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ name, @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, @as(f64, @bitCast(ins.b.item)), if (ins.b.item != 0) "TRUE" else "FALSE", ins.b.item }),
                 .literalAHandleB => try out.print("( {s} LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) HANDLE({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
             }

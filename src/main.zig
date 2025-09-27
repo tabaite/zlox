@@ -113,7 +113,20 @@ pub fn main() !void {
                 try bytecode.printInstruction(ins, stderrAny);
             }
 
-            _ = try stderr.write("\nwe are not evaluating at the moment due to bytecode reworking\n");
+            _ = try stderr.write("\nevaluating\n");
+            var rt = try runtime.Runtime.init(astAlloc, gpa);
+            defer rt.deinit();
+            rt.run(codegen.bytecodeList.items);
+
+            _ = try stderr.write("\nreally hacky stack vis:\n");
+            for (0..rt.variableStack.used) |i| {
+                try bytecode.printInstruction(.{
+                    .a = rt.variableStack.items[i],
+                    .b = .NULL_HANDLE,
+                    .dest = 8 * @as(u32, @truncate(i)),
+                    .op = .{ .argType = .bothLiteral, .op = .pushItem },
+                }, stderrAny);
+            }
         },
         .unknown => {
             try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});

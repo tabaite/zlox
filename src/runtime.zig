@@ -38,7 +38,7 @@ pub const VarStack = struct {
 
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !VarStack {
         const items = try allocator.alloc(Operand, STACKSIZE);
-        items[0] = .nil;
+        items[0] = .{ .item = 0 };
         return .{
             .items = items,
             .used = 1,
@@ -54,24 +54,20 @@ pub const VarStack = struct {
         self.allocator.free(self.items);
     }
 
-    fn push(self: *VarStack, v: Operand) !Handle {
-        if (self.used >= STACKSIZE) {
-            return RuntimeError.StackOverflow;
-        }
-
+    fn push(self: *VarStack, v: Operand) Handle {
         const handle = self.used;
         self.items[handle] = v;
         self.used += 1;
 
-        return .{ .handle = handle, .type = v };
+        return handle;
     }
 
     pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
-        self.items[handle.handle] = new;
+        self.items[handle / 8] = new;
     }
 
     pub fn get(self: *VarStack, handle: Handle) Operand {
-        return self.items[handle.handle];
+        return self.items[handle / 8];
     }
 
     pub fn pop(self: *VarStack) void {
@@ -86,27 +82,25 @@ pub const Runtime = struct {
     variableStack: VarStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
-            .varRegistry = std.StringHashMap(Handle).init(allocator),
             .variableStack = try VarStack.init(allocator, stringAllocator),
         };
     }
     pub fn deinit(self: *Runtime) void {
         self.variableStack.deinit();
-        self.varRegistry.deinit();
     }
 
     pub fn run(self: *Runtime, code: []bytecode.Instruction) void {
         for (code) |ins| {
-            switch (ins.op) {
-                .pushItem => self.variableStack.push(ins.a),
+            switch (ins.op.op) {
+                .pushItem => _ = self.variableStack.push(ins.a),
                 else => {
                     const a: u64 = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a.item,
-                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)),
+                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)).item,
                     };
                     const b: u64 = switch (ins.op.argType) {
-                        .literalAHandleB, .bothLiteral => ins.b.item,
-                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.b.item)),
+                        .handleALiteralB, .bothLiteral => ins.b.item,
+                        .literalAHandleB, .bothHandle => self.variableStack.get(@truncate(ins.b.item)).item,
                     };
                     const result: u64 = switch (ins.op.op) {
                         .move => a,
@@ -117,15 +111,15 @@ pub const Runtime = struct {
                         .subtract => @bitCast(@as(f64, @floatFromInt(a)) - @as(f64, @floatFromInt(b))),
                         .multiply => @bitCast(@as(f64, @floatFromInt(a)) * @as(f64, @floatFromInt(b))),
                         .divide => @bitCast(@as(f64, @floatFromInt(a)) / @as(f64, @floatFromInt(b))),
-                        .modulo => @bitCast(@as(f64, @floatFromInt(a)) % @as(f64, @floatFromInt(b))),
-                        .neq => @bitCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64)))),
-                        .eq => @bitCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64)))),
-                        .ge => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) >= @as(f64, @floatFromInt(b)))),
-                        .le => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) <= @as(f64, @floatFromInt(b)))),
-                        .greater => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) > @as(f64, @floatFromInt(b)))),
-                        .less => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) < @as(f64, @floatFromInt(b)))),
-                        .bAnd => @bitCast(@intFromBool((a != 0) and (b != 0))),
-                        .bOr => @bitCast(@intFromBool((a != 0) or (b != 0))),
+                        .modulo => @bitCast(@mod(@as(f64, @floatFromInt(a)), @as(f64, @floatFromInt(b)))),
+                        .neq => @as(u64, @intCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64))))),
+                        .eq => @as(u64, @intCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64))))),
+                        .ge => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) >= @as(f64, @floatFromInt(b))))),
+                        .le => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) <= @as(f64, @floatFromInt(b))))),
+                        .greater => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) > @as(f64, @floatFromInt(b))))),
+                        .less => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) < @as(f64, @floatFromInt(b))))),
+                        .bAnd => @as(u64, @intCast(@intFromBool((a != 0) and (b != 0)))),
+                        .bOr => @as(u64, @intCast(@intFromBool((a != 0) or (b != 0)))),
                         .pushItem => 0,
                     };
                     self.variableStack.set(ins.dest, .{ .item = result });
