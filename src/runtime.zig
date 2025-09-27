@@ -63,11 +63,11 @@ pub const VarStack = struct {
     }
 
     pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
-        self.items[handle / 8] = new;
+        self.items[handle] = new;
     }
 
     pub fn get(self: *VarStack, handle: Handle) Operand {
-        return self.items[handle / 8];
+        return self.items[handle];
     }
 
     pub fn pop(self: *VarStack) void {

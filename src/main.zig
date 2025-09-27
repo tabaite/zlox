@@ -119,11 +119,11 @@ pub fn main() !void {
             rt.run(codegen.bytecodeList.items);
 
             _ = try stderr.write("\nreally hacky stack vis:\n");
-            for (0..rt.variableStack.used) |i| {
+            for (0..rt.variableStack.used - 1) |i| {
                 try bytecode.printInstruction(.{
                     .a = rt.variableStack.items[i],
                     .b = .NULL_HANDLE,
-                    .dest = 8 * @as(u32, @truncate(i)),
+                    .dest = @truncate(i),
                     .op = .{ .argType = .bothLiteral, .op = .pushItem },
                 }, stderrAny);
             }
