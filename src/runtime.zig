@@ -56,18 +56,18 @@ pub const VarStack = struct {
 
     fn push(self: *VarStack, v: Operand) Handle {
         const handle = self.used;
-        self.items[handle] = v;
+        self.items[handle + 1] = v;
         self.used += 1;
 
         return handle;
     }
 
     pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
-        self.items[handle] = new;
+        self.items[handle + 1] = new;
     }
 
     pub fn get(self: *VarStack, handle: Handle) Operand {
-        return self.items[handle];
+        return self.items[handle + 1];
     }
 
     pub fn pop(self: *VarStack) void {
