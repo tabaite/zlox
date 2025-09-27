@@ -105,7 +105,7 @@ pub const BytecodeGenerator = struct {
     variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
     stringBuffer: std.ArrayListUnmanaged(u8),
-    // Tracks how high the stack is currently in bytes.
+    // Tracks how high the stack is currently in RawOperands.
     stackHeight: u32,
 
     pub fn init(allocator: Allocator) !BytecodeGenerator {
@@ -167,7 +167,7 @@ pub const BytecodeGenerator = struct {
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, initialValue: ?HandledOperand) !HandledOperand {
         // This can store any (built-in) type.
-        const variableSize = 8;
+        const variableSize = 1;
         return h: switch ((initialValue orelse HandledOperand.NIL).type) {
             .string => {
                 const strHandle = (initialValue orelse unreachable).operand.item;
