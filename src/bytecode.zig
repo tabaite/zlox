@@ -36,8 +36,8 @@ pub const OpCode = enum(u30) {
     // Just for now!
     noop,
     // Used for pushing the index/length of string literals.
-    // A: Bytes to be pushed, B: Number of bytes to push (MAX 8), Dest: Unused, Arg Type: Unused
-    pushBytes,
+    // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Unused
+    pushItem,
     // A: Number to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
     negateNumber,
     // A: Bool to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
@@ -183,7 +183,7 @@ pub const BytecodeGenerator = struct {
                 const start = self.stackHeight;
 
                 // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
+                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
                 self.stackHeight += variableSize;
                 try self.bytecodeList.append(self.allocator, variable);
 
@@ -287,9 +287,9 @@ pub const BytecodeGenerator = struct {
 
                 const start = self.stackHeight;
                 self.stackHeight += 2 * @sizeOf(u64);
-                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
+                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
                 try self.bytecodeList.append(self.allocator, ptr);
-                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushBytes }, .a = .{ .item = @bitCast(s.len) }, .b = .{ .item = 8 }, .dest = 0 };
+                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(s.len) }, .b = .{ .item = 8 }, .dest = 0 };
                 try self.bytecodeList.append(self.allocator, len);
 
                 return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
@@ -323,7 +323,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
         // types are erased so yeah
-        .pushBytes => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) SIZE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
+        .pushItem => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         else => {
             const name = switch (ins.op.op) {
                 .add => "ADD",

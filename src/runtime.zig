@@ -2,7 +2,7 @@
 // a user-defined class.
 
 const std = @import("std");
-const parsing = @import("parsing.zig");
+const bytecode = @import("bytecode.zig");
 const Allocator = std.mem.Allocator;
 
 pub const RuntimeError = error{
@@ -12,16 +12,10 @@ pub const RuntimeError = error{
     VariableAlreadyDeclared,
 };
 
-pub const RuntimeIndex = u24;
-
-const Type = parsing.Type;
-const Variable = parsing.Literal;
+pub const Operand = bytecode.RawOperand;
 
 // A handle to a variable stored in the IRHandler.
-pub const VarHandle = packed struct {
-    handle: u24,
-    type: Type,
-};
+pub const Handle = bytecode.Handle;
 
 test "push varstack" {
     var debug = std.heap.DebugAllocator(.{}){};
@@ -34,16 +28,16 @@ test "push varstack" {
 }
 
 pub const VarStack = struct {
-    const NILHANDLE: VarHandle = .{ .type = .nil, .handle = 0 };
+    const NILHANDLE: Handle = 0;
     const STACKSIZE: usize = 16777215;
 
-    items: []Variable,
+    items: []Operand,
     allocator: Allocator,
     stringAllocator: Allocator,
-    used: u24,
+    used: u32,
 
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !VarStack {
-        const items = try allocator.alloc(Variable, STACKSIZE);
+        const items = try allocator.alloc(Operand, STACKSIZE);
         items[0] = .nil;
         return .{
             .items = items,
@@ -60,78 +54,39 @@ pub const VarStack = struct {
         self.allocator.free(self.items);
     }
 
-    fn push(self: *VarStack, v: Variable) !VarHandle {
+    fn push(self: *VarStack, v: Operand) !Handle {
         if (self.used >= STACKSIZE) {
             return RuntimeError.StackOverflow;
         }
 
         const handle = self.used;
-        self.items[handle] = val: {
-            if (v == .string) {
-                const str = try self.stringAllocator.dupe(u8, v.string);
-                const newv = Variable{ .string = str };
-                break :val newv;
-            } else {
-                break :val v;
-            }
-        };
+        self.items[handle] = v;
         self.used += 1;
 
         return .{ .handle = handle, .type = v };
     }
 
-    pub fn set(self: *VarStack, handle: VarHandle, new: Variable) !void {
-        if (handle.handle > self.used) {
-            return RuntimeError.OutOfStackBounds;
-        }
-
-        const item = &self.items[handle.handle];
-        if (item.* == .string) {
-            self.stringAllocator.free(item.string);
-        }
-
-        switch (new) {
-            .number => |n| {
-                item.* = .{ .number = n };
-            },
-            .bool => |b| {
-                item.* = .{ .bool = b };
-            },
-            .nil => {
-                item.* = .nil;
-            },
-            .string => |s| {
-                const str = try self.stringAllocator.dupe(u8, s);
-                item.* = .{ .string = str };
-            },
-        }
+    pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
+        self.items[handle.handle] = new;
     }
 
-    pub fn get(self: *VarStack, handle: VarHandle) !Variable {
-        if (handle.handle > self.used) {
-            return RuntimeError.OutOfStackBounds;
-        }
+    pub fn get(self: *VarStack, handle: Handle) Operand {
         return self.items[handle.handle];
     }
 
     pub fn pop(self: *VarStack) void {
         // The first element is our nil handle.
         if (self.used > 1) {
-            const handle = self.items[self.used - 1];
-            if (handle == .string) {
-                self.stringAllocator.free(handle.string);
-            }
             self.used -= 1;
         }
     }
 };
 
 pub const Runtime = struct {
-    varRegistry: std.StringHashMap(VarHandle),
     variableStack: VarStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
-            .varRegistry = std.StringHashMap(VarHandle).init(allocator),
+            .varRegistry = std.StringHashMap(Handle).init(allocator),
             .variableStack = try VarStack.init(allocator, stringAllocator),
         };
     }
@@ -140,37 +95,42 @@ pub const Runtime = struct {
         self.varRegistry.deinit();
     }
 
-    pub fn declare(self: *Runtime, name: []u8, v: ?Variable) !VarHandle {
-        const handle = if (v != null) try self.push(v orelse unreachable) else VarStack.NILHANDLE;
-        const result = try self.varRegistry.getOrPut(name);
-        if (result.found_existing) {
-            return RuntimeError.VariableAlreadyDeclared;
-        } else {
-            result.value_ptr.* = handle;
+    pub fn run(self: *Runtime, code: []bytecode.Instruction) void {
+        for (code) |ins| {
+            switch (ins.op) {
+                .pushItem => self.variableStack.push(ins.a),
+                else => {
+                    const a: u64 = switch (ins.op.argType) {
+                        .literalAHandleB, .bothLiteral => ins.a.item,
+                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)),
+                    };
+                    const b: u64 = switch (ins.op.argType) {
+                        .literalAHandleB, .bothLiteral => ins.b.item,
+                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.b.item)),
+                    };
+                    const result: u64 = switch (ins.op.op) {
+                        .move => a,
+                        .negateBool => @intCast(@intFromBool(!(a != 0))),
+                        .negateNumber => @bitCast(-@as(f64, @floatFromInt(a))),
+                        .noop => 0,
+                        .add => @bitCast(@as(f64, @floatFromInt(a)) + @as(f64, @floatFromInt(b))),
+                        .subtract => @bitCast(@as(f64, @floatFromInt(a)) - @as(f64, @floatFromInt(b))),
+                        .multiply => @bitCast(@as(f64, @floatFromInt(a)) * @as(f64, @floatFromInt(b))),
+                        .divide => @bitCast(@as(f64, @floatFromInt(a)) / @as(f64, @floatFromInt(b))),
+                        .modulo => @bitCast(@as(f64, @floatFromInt(a)) % @as(f64, @floatFromInt(b))),
+                        .neq => @bitCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64)))),
+                        .eq => @bitCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64)))),
+                        .ge => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) >= @as(f64, @floatFromInt(b)))),
+                        .le => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) <= @as(f64, @floatFromInt(b)))),
+                        .greater => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) > @as(f64, @floatFromInt(b)))),
+                        .less => @bitCast(@intFromBool(@as(f64, @floatFromInt(a)) < @as(f64, @floatFromInt(b)))),
+                        .bAnd => @bitCast(@intFromBool((a != 0) and (b != 0))),
+                        .bOr => @bitCast(@intFromBool((a != 0) or (b != 0))),
+                        .pushItem => 0,
+                    };
+                    self.variableStack.set(ins.dest, .{ .item = result });
+                },
+            }
         }
-        return handle;
-    }
-
-    pub fn getByName(self: *Runtime, name: []u8) !Variable {
-        const handle = self.varRegistry.get(name) orelse return RuntimeError.UndeclaredVariableAccessed;
-        return try self.variableStack.get(handle);
-    }
-
-    pub fn get(self: *Runtime, handle: VarHandle) !Variable {
-        return try self.variableStack.get(handle);
-    }
-
-    pub fn set(self: *Runtime, name: []u8, new: Variable) !void {
-        const result = try self.varRegistry.getOrPut(name);
-        if (result.found_existing) {
-            const handle = result.value_ptr.*;
-            try self.variableStack.set(handle, new);
-        } else {
-            return RuntimeError.UndeclaredVariableAccessed;
-        }
-    }
-
-    fn push(self: *Runtime, v: Variable) !VarHandle {
-        return self.variableStack.push(v);
     }
 };
