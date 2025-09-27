@@ -42,24 +42,22 @@ pub const OpCode = enum(u30) {
     negateNumber,
     // A: Bool to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
     negateBool,
-    // A, B: Numbers to add, Dest: Where to store the result, Arg Type: Used for A and B
+
+    // A, B: Operands, Dest: Where to store the result, Arg Type: Used for A and B
     add,
-    // A, B: Numbers to subtract, Dest: Where to store the result, Arg Type: Used for A and B
     subtract,
-    // A, B: Numbers to multiply, Dest: Where to store the result, Arg Type: Used for A and B
     multiply,
-    // A, B: Numbers to modulo, Dest: Where to store the result, Arg Type: Used for A and B
     modulo,
-    // A, B: Numbers to divide, Dest: Where to store the result, Arg Type: Used for A and B
     divide,
-    // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
     eq,
-    // A, B: Numbers to compare, Dest: Where to store the result, Arg Type: Used for A and B
     neq,
-    // A, B: Bools to or, Dest: Where to store the result, Arg Type: Used for A and B
+    greater,
+    ge,
+    less,
+    le,
     bOr,
-    // A, B: Bools to and, Dest: Where to store the result, Arg Type: Used for A and B
     bAnd,
+
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
     move,
 };
@@ -218,9 +216,12 @@ pub const BytecodeGenerator = struct {
                 .divide => .{ .op = .divide, .argType = .number, .retType = .number },
                 .notEquality => .{ .op = .neq, .argType = .number, .retType = .bool },
                 .equality => .{ .op = .eq, .argType = .number, .retType = .bool },
+                .greater => .{ .op = .greater, .argType = .number, .retType = .bool },
+                .greaterEqual => .{ .op = .ge, .argType = .number, .retType = .bool },
+                .less => .{ .op = .less, .argType = .number, .retType = .bool },
+                .lessEqual => .{ .op = .le, .argType = .number, .retType = .bool },
                 .bOr => .{ .op = .bOr, .argType = .bool, .retType = .bool },
                 .bAnd => .{ .op = .bAnd, .argType = .bool, .retType = .bool },
-                else => break :r .{ .op = .{ .op = .noop, .argType = .bothLiteral }, .dest = .NIL },
             };
             const aTypeDecayed: Type = switch (a.type) {
                 .numberLit => .number,
@@ -332,6 +333,10 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
                 .modulo => "MOD",
                 .neq => "NEQ",
                 .eq => "EQL",
+                .ge => "GRE",
+                .le => "LSE",
+                .greater => "GRT",
+                .less => "LES",
                 .bAnd => "AND",
                 .bOr => "OR",
                 else => @panic("ahhhh what the hell"),
