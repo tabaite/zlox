@@ -187,7 +187,12 @@ pub const BytecodeGenerator = struct {
                 self.stackHeight += variableSize;
                 try self.bytecodeList.append(self.allocator, variable);
 
-                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = .number };
+                const t: Type = switch (ty) {
+                    .numberLit => .number,
+                    .boolLit => .bool,
+                    else => |t| t,
+                };
+                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = t };
             },
         };
     }
@@ -199,16 +204,19 @@ pub const BytecodeGenerator = struct {
         };
         const OpInfo = struct {
             op: OpCode,
-            type: Type,
+            argType: Type,
+            retType: Type,
         };
         const res: InsInfo = r: {
             const info: OpInfo = switch (op) {
-                .add => .{ .op = .add, .type = .number },
-                .subtract => .{ .op = .subtract, .type = .number },
-                .multiply => .{ .op = .multiply, .type = .number },
-                .divide => .{ .op = .divide, .type = .number },
-                .notEquality => .{ .op = .neq, .type = .number },
-                .equality => .{ .op = .eq, .type = .number },
+                .add => .{ .op = .add, .argType = .number, .retType = .number },
+                .subtract => .{ .op = .subtract, .argType = .number, .retType = .number },
+                .multiply => .{ .op = .multiply, .argType = .number, .retType = .number },
+                .divide => .{ .op = .divide, .argType = .number, .retType = .number },
+                .notEquality => .{ .op = .neq, .argType = .number, .retType = .bool },
+                .equality => .{ .op = .eq, .argType = .number, .retType = .bool },
+                .bOr => .{ .op = .bOr, .argType = .bool, .retType = .bool },
+                .bAnd => .{ .op = .bAnd, .argType = .bool, .retType = .bool },
                 else => break :r .{ .op = .{ .op = .noop, .argType = .bothLiteral }, .dest = .NIL },
             };
             const aTypeDecayed: Type = switch (a.type) {
@@ -222,7 +230,7 @@ pub const BytecodeGenerator = struct {
                 else => |t| t,
             };
 
-            if (aTypeDecayed != info.type or bTypeDecayed != info.type) {
+            if (aTypeDecayed != info.argType or bTypeDecayed != info.argType) {
                 return CompilationError.IncompatibleType;
             }
 
@@ -236,7 +244,8 @@ pub const BytecodeGenerator = struct {
                 .numberLit, .boolLit => @intFromEnum(ArgTypes.handleAliteralB),
                 else => @intFromEnum(ArgTypes.bothHandle),
             };
-            const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
+
+            const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), .{ .type = info.retType, .operand = .{ .item = 0 } });
             break :r .{ .op = .{ .op = info.op, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .dest = dest };
         };
         const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = @truncate(res.dest.operand.item) };
@@ -310,7 +319,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
         // types are erased so yeah
-        .pushBytes => try out.print("( PSH LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) SIZE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
+        .pushBytes => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) SIZE({d}) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
         else => {
             const name = switch (ins.op.op) {
                 .add => "ADD",
@@ -319,13 +328,15 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
                 .divide => "DIV",
                 .neq => "NEQ",
                 .eq => "EQL",
+                .bAnd => "AND",
+                .bOr => "OR",
                 else => @panic("ahhhh what the hell"),
             };
             switch (ins.op.argType) {
                 .bothHandle => try out.print("( {s} HANDLE({d}) HANDLE({d}) ", .{ name, ins.a.item, ins.b.item }),
-                .handleAliteralB => try out.print("( {s} HANDLE({d}) LIT({d}) ", .{ name, ins.a.item, @as(f64, @bitCast(ins.b.item)) }),
-                .bothLiteral => try out.print("( {s} LIT({d}) LIT({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), @as(f64, @bitCast(ins.b.item)) }),
-                .literalAHandleB => try out.print("( {s} LIT({d}) HANDLE({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), ins.b.item }),
+                .handleAliteralB => try out.print("( {s} HANDLE({d}) LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ name, ins.a.item, @as(f64, @bitCast(ins.b.item)), if (ins.b.item != 0) "TRUE" else "FALSE", ins.b.item }),
+                .bothLiteral => try out.print("( {s} LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ name, @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, @as(f64, @bitCast(ins.b.item)), if (ins.b.item != 0) "TRUE" else "FALSE", ins.b.item }),
+                .literalAHandleB => try out.print("( {s} LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) HANDLE({d}) ", .{ name, @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item, ins.b.item }),
             }
         },
     }
