@@ -1,4 +1,4 @@
-(){};,+-*!===<=>=!=<>/.
+(){};,+-*!===<=>=!=<>/.::::
 
 // expect: LEFT_PAREN ( null
 // expect: RIGHT_PAREN ) null
