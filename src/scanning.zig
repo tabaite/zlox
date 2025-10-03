@@ -54,9 +54,18 @@ pub const TokenType = enum {
     kwTrue,
     kwVar,
     kwWhile,
+
+    tyNum,
+    tyBool,
+    tyString,
+    tyVoid,
 };
 
 pub const keywordMap = std.StaticStringMap(TokenType).initComptime(.{
+    .{ "number", .tyNum },
+    .{ "bool", .tyBool },
+    .{ "string", .tyString },
+    .{ "void", .tyVoid },
     .{ "and", .kwAnd },
     .{ "class", .kwClass },
     .{ "else", .kwElse },
@@ -312,6 +321,11 @@ pub fn printToken(token: Token, out: std.io.AnyWriter) !void {
         .kwTrue => try out.write("TRUE true null\n"),
         .kwVar => try out.write("VAR var null\n"),
         .kwWhile => try out.write("WHILE while null\n"),
+
+        .tyNum => try out.write("TYPE number null\n"),
+        .tyBool => try out.write("TYPE bool null\n"),
+        .tyString => try out.write("TYPE string null\n"),
+        .tyVoid => try out.write("TYPE void null\n"),
 
         .number => {
             const str = token.source orelse "";

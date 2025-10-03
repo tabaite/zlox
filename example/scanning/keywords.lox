@@ -1,5 +1,7 @@
 and class else false for fun if nil or return super this true var while
 
+bool number string void
+
 // expect: AND and null
 // expect: CLASS class null
 // expect: ELSE else null
@@ -16,3 +18,7 @@ and class else false for fun if nil or return super this true var while
 // expect: VAR var null
 // expect: WHILE while null
 // expect: EOF  null
+// expect: TYPE bool null
+// expect: TYPE number null
+// expect: TYPE string null
+// expect: TYPE void null
