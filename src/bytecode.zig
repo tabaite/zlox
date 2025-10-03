@@ -79,6 +79,16 @@ pub const Type = enum(u64) {
     // _,
 };
 
+// Any declaration where the type is not known, or where the type cannot be inferred from its
+// initial value is not allowed.
+pub const NewVariableTypeInfo = union(enum) {
+    fromValue: HandledOperand,
+    provided: struct {
+        type: Type,
+        initial: ?HandledOperand,
+    },
+};
+
 // Operand, but with a type. Not used in bytecode, but rather for variable tracking and pushing operations.
 pub const HandledOperand = struct {
     operand: RawOperand,
@@ -123,8 +133,8 @@ pub const BytecodeGenerator = struct {
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn registerVariable(self: *BytecodeGenerator, name: []u8, initialValue: ?HandledOperand) !HandledOperand {
-        const handle = try self.pushOperand(name, initialValue);
+    pub fn registerVariable(self: *BytecodeGenerator, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
+        const handle = try self.pushOperand(name, typeInfo);
         try self.variableRegistry.put(self.allocator, name, handle);
         return handle;
     }
@@ -165,20 +175,45 @@ pub const BytecodeGenerator = struct {
     }
 
     // name is only used for debugging currently
-    pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, initialValue: ?HandledOperand) !HandledOperand {
+    pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
         // This can store any (built-in) type.
         const variableSize = 1;
-        return h: switch ((initialValue orelse HandledOperand.NIL).type) {
+        const InitializeInformation = struct { value: HandledOperand, type: Type };
+        const typeInfo: InitializeInformation = switch (info) {
+            .provided => |t| .{ .value = t.initial orelse zero: {
+                switch (t.type) {
+                    .string => break :zero try self.newLiteral(.{ .string = "" }),
+                    else => |ty| break :zero .{ .operand = .{ .item = 0 }, .type = ty },
+                }
+            }, .type = t.type },
+            .fromValue => |h| .{ .value = h, .type = h.type },
+        };
+        // "Decay" literal types into regular ones.
+        const decayedType: Type = switch (typeInfo.type) {
+            .numberLit => .number,
+            .boolLit => .bool,
+            else => |t| t,
+        };
+        // "Decay" literal types into regular ones.
+        const decayedValueType: Type = switch (typeInfo.value.type) {
+            .numberLit => .number,
+            .boolLit => .bool,
+            else => |t| t,
+        };
+        if (decayedType != decayedValueType) {
+            return CompilationError.IncompatibleType;
+        }
+        return h: switch (typeInfo.type) {
             .string => {
-                const strHandle = (initialValue orelse unreachable).operand.item;
+                const strHandle = typeInfo.value.operand.item;
 
                 std.debug.print("( REGISTER \"{s}\" STRING_HANDLE({d}) )\n", .{ debugName, strHandle });
 
                 break :h .{ .operand = .{ .item = strHandle }, .type = .string };
             },
             .nil => HandledOperand.NIL,
-            else => |ty| {
-                const n = if (ty == .numberLit or ty == .boolLit) (initialValue orelse unreachable).operand.item else 0;
+            else => {
+                const n = typeInfo.value.operand.item;
 
                 const start = self.stackHeight;
 
@@ -187,12 +222,7 @@ pub const BytecodeGenerator = struct {
                 self.stackHeight += variableSize;
                 try self.bytecodeList.append(self.allocator, variable);
 
-                const t: Type = switch (ty) {
-                    .numberLit => .number,
-                    .boolLit => .bool,
-                    else => |t| t,
-                };
-                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = t };
+                break :h .{ .operand = .{ .item = @as(u64, start) }, .type = decayedType };
             },
         };
     }
@@ -249,7 +279,8 @@ pub const BytecodeGenerator = struct {
                 else => @intFromEnum(ArgTypes.bothHandle),
             };
 
-            const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), .{ .type = info.retType, .operand = .{ .item = 0 } });
+            const newVar: NewVariableTypeInfo = .{ .provided = .{ .type = info.retType, .initial = null } };
+            const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), newVar);
             break :r .{ .op = .{ .op = info.op, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .dest = dest };
         };
         const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = @truncate(res.dest.operand.item) };
@@ -271,7 +302,7 @@ pub const BytecodeGenerator = struct {
             },
         };
         std.debug.print("pushed unary\n", .{});
-        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), a);
+        const dest = try self.pushOperand(@constCast("TEMP TEMP TEMP TEMP"), .{ .provided = .{ .type = a.type, .initial = a } });
         const item = Instruction{ .op = res, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
         return dest;

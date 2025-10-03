@@ -36,6 +36,9 @@ pub const ParsingError = error{
     ExpectedClosingBrace,
     ExpectedIdentifier,
     ExpectedExpression,
+    ExpectedType,
+    CustomTypesNotYetSupported,
+    VariableDeclarationMustBeTyped,
 };
 
 pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
@@ -138,14 +141,39 @@ pub const AstParser = struct {
         }
 
         self.advance();
-        const continuation = (self.tryPeek() orelse return ParsingError.ExpectedSemicolon);
-        switch (continuation.tokenType) {
-            .semicolon => {
-                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), null);
+        switch ((self.tryPeek() orelse return ParsingError.ExpectedSemicolon).tokenType) {
+            .colon => {
+                self.advance();
+
+                const typeToken = self.tryPeek() orelse return ParsingError.ExpectedType;
+                const varType: bytecode.Type = switch (typeToken.tokenType) {
+                    .tyBool => .bool,
+                    .tyNum => .number,
+                    .tyString => .string,
+                    .tyVoid => .nil,
+                    .identifier => return ParsingError.CustomTypesNotYetSupported,
+                    else => return ParsingError.ExpectedType,
+                };
+
+                self.advance();
+
+                const next = self.tryPeek() orelse return ParsingError.ExpectedSemicolon;
+                const initialValue: ?Handle = val: {
+                    switch (next.tokenType) {
+                        .semicolon => break :val null,
+                        .equal => {
+                            self.advance();
+                            break :val try self.expressionRule(codegen, allocator);
+                        },
+                        else => return ParsingError.ExpectedToken,
+                    }
+                };
+                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
             },
+            .semicolon => return ParsingError.VariableDeclarationMustBeTyped,
             .equal => {
                 self.advance();
-                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), try self.expressionRule(codegen, allocator));
+                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, allocator) });
             },
             else => return ParsingError.ExpectedToken,
         }

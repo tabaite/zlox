@@ -91,7 +91,7 @@ pub fn main() !void {
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
 
-            try astParser.parseAndCompileAll(&codegen, astAlloc);
+            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -107,7 +107,7 @@ pub fn main() !void {
 
             _ = try stderr.write("\nbytecode:\n");
 
-            try astParser.parseAndCompileAll(&codegen, astAlloc);
+            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -135,12 +135,13 @@ pub fn main() !void {
 }
 
 fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize, offendingToken: scanning.Token) !void {
+    const Parser = parsing.ParsingError;
     switch (err) {
-        parsing.ParsingError.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
-        parsing.ParsingError.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
-        parsing.ParsingError.ExpectedToken => _ = try out.write("expected a token\n"),
-        parsing.ParsingError.ExpectedIdentifier => _ = try out.write("expected a name"),
-        parsing.ParsingError.UnexpectedToken => _ = try out.write("unexpected token!\n"),
+        Parser.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
+        Parser.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
+        Parser.ExpectedToken => _ = try out.write("expected a token\n"),
+        Parser.ExpectedIdentifier => _ = try out.write("expected a name\n"),
+        Parser.UnexpectedToken => _ = try out.write("unexpected token!\n"),
         else => return err,
     }
     _ = try out.write("token:\n");
