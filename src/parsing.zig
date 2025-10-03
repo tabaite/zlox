@@ -3,9 +3,8 @@ const std = @import("std");
 const bytecode = @import("bytecode.zig");
 
 // program        → ( statement )* EOF
-// statement      → ( decl | call | expression ) ";"
-// decl           → "var" IDENTIFIER ( "=" expression )?
-// call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
+// statement      → ( decl | expression ) ";"
+// declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
 // assignment     → IDENTIFIER "=" expression
 // expression     → or
 // or             → and "or" and
@@ -15,9 +14,11 @@ const bytecode = @import("bytecode.zig");
 // term           → factor ( ( "-" | "+" ) factor )*
 // factor         → unary ( ( "/" | "*" | "%" ) unary )*
 // unary          → ( "!" | "-" ) unary
-//                | primary
+//                | call | primary
+// call           → IDENTIFIER "(" ( ( expression "," )* expression ) ")"
 // primary        → NUMBER | STRING | "true" | "false" | "nil"
 //                | "(" expression ")"
+// type           → "number" | "bool" | "string" | "void"
 
 const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
