@@ -35,8 +35,8 @@ pub const ArgTypes = enum(u2) {
 pub const OpCode = enum(u30) {
     // Just for now!
     noop,
-    // Used for pushing the index/length of string literals.
-    // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Unused
+    // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
+    // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
     pushItem,
     // A: Number to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
     negateNumber,
@@ -124,7 +124,8 @@ pub const BytecodeGenerator = struct {
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
-            .stackHeight = 0,
+            // The first element on the stack is the null handle.
+            .stackHeight = 1,
         };
     }
     pub fn deinit(self: *BytecodeGenerator) void {
@@ -213,12 +214,16 @@ pub const BytecodeGenerator = struct {
             },
             .nil => HandledOperand.NIL,
             else => {
+                const arg: ArgTypes = switch (typeInfo.value.type) {
+                    .numberLit, .boolLit => .bothLiteral,
+                    else => .bothHandle,
+                };
                 const n = typeInfo.value.operand.item;
 
                 const start = self.stackHeight;
 
                 // Dest is unused, but we set it to the stack height just for convenience purposes
-                const variable = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
+                const variable = Instruction{ .op = .{ .argType = arg, .op = .pushItem }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
                 self.stackHeight += variableSize;
                 try self.bytecodeList.append(self.allocator, variable);
 
@@ -354,7 +359,10 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothLiteral, .literalAHandleB => try out.print("( NEG LIT({d}) ", .{@as(f64, @bitCast(ins.a.item))}),
         },
         // types are erased so yeah
-        .pushItem => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
+        .pushItem => switch (ins.op.argType) {
+            .bothHandle, .handleALiteralB => try out.print("( PSH HANDLE({d}) ", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
+        },
         else => {
             const name = switch (ins.op.op) {
                 .add => "ADD",

@@ -56,18 +56,18 @@ pub const VarStack = struct {
 
     fn push(self: *VarStack, v: Operand) Handle {
         const handle = self.used;
-        self.items[handle + 1] = v;
+        self.items[handle] = v;
         self.used += 1;
 
         return handle;
     }
 
     pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
-        self.items[handle + 1] = new;
+        self.items[handle] = new;
     }
 
     pub fn get(self: *VarStack, handle: Handle) Operand {
-        return self.items[handle + 1];
+        return self.items[handle];
     }
 
     pub fn pop(self: *VarStack) void {
@@ -92,7 +92,13 @@ pub const Runtime = struct {
     pub fn run(self: *Runtime, code: []bytecode.Instruction) void {
         for (code) |ins| {
             switch (ins.op.op) {
-                .pushItem => _ = self.variableStack.push(ins.a),
+                .pushItem => {
+                    const val = switch (ins.op.argType) {
+                        .literalAHandleB, .bothLiteral => ins.a,
+                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)),
+                    };
+                    _ = self.variableStack.push(val);
+                },
                 else => {
                     const a: u64 = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a.item,
@@ -105,19 +111,19 @@ pub const Runtime = struct {
                     const result: u64 = switch (ins.op.op) {
                         .move => a,
                         .negateBool => @intCast(@intFromBool(!(a != 0))),
-                        .negateNumber => @bitCast(-@as(f64, @floatFromInt(a))),
+                        .negateNumber => @bitCast(-@as(f64, @bitCast(a))),
                         .noop => 0,
-                        .add => @bitCast(@as(f64, @floatFromInt(a)) + @as(f64, @floatFromInt(b))),
-                        .subtract => @bitCast(@as(f64, @floatFromInt(a)) - @as(f64, @floatFromInt(b))),
-                        .multiply => @bitCast(@as(f64, @floatFromInt(a)) * @as(f64, @floatFromInt(b))),
-                        .divide => @bitCast(@as(f64, @floatFromInt(a)) / @as(f64, @floatFromInt(b))),
-                        .modulo => @bitCast(@mod(@as(f64, @floatFromInt(a)), @as(f64, @floatFromInt(b)))),
+                        .add => @bitCast(@as(f64, @bitCast(a)) + @as(f64, @bitCast(b))),
+                        .subtract => @bitCast(@as(f64, @bitCast(a)) - @as(f64, @bitCast(b))),
+                        .multiply => @bitCast(@as(f64, @bitCast(a)) * @as(f64, @bitCast(b))),
+                        .divide => @bitCast(@as(f64, @bitCast(a)) / @as(f64, @bitCast(b))),
+                        .modulo => @bitCast(@mod(@as(f64, @bitCast(a)), @as(f64, @bitCast(b)))),
                         .neq => @as(u64, @intCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64))))),
                         .eq => @as(u64, @intCast(@intFromBool(!std.math.approxEqAbs(f64, @bitCast(a), @bitCast(b), 5 * std.math.floatEps(f64))))),
-                        .ge => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) >= @as(f64, @floatFromInt(b))))),
-                        .le => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) <= @as(f64, @floatFromInt(b))))),
-                        .greater => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) > @as(f64, @floatFromInt(b))))),
-                        .less => @as(u64, @intCast(@intFromBool(@as(f64, @floatFromInt(a)) < @as(f64, @floatFromInt(b))))),
+                        .ge => @as(u64, @intCast(@intFromBool(@as(f64, @bitCast(a)) >= @as(f64, @bitCast(b))))),
+                        .le => @as(u64, @intCast(@intFromBool(@as(f64, @bitCast(a)) <= @as(f64, @bitCast(b))))),
+                        .greater => @as(u64, @intCast(@intFromBool(@as(f64, @bitCast(a)) > @as(f64, @bitCast(b))))),
+                        .less => @as(u64, @intCast(@intFromBool(@as(f64, @bitCast(a)) < @as(f64, @bitCast(b))))),
                         .bAnd => @as(u64, @intCast(@intFromBool((a != 0) and (b != 0)))),
                         .bOr => @as(u64, @intCast(@intFromBool((a != 0) or (b != 0)))),
                         .pushItem => 0,
