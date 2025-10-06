@@ -3,6 +3,7 @@ const std = @import("std");
 const bytecode = @import("bytecode.zig");
 
 // program        → ( statement )* EOF
+// block          → "{" ( statement )* "}"
 // statement      → ( decl | expression ) ";"
 // declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
 // assignment     → IDENTIFIER "=" expression
@@ -115,8 +116,37 @@ pub const AstParser = struct {
     // to the token immediately after the expression it returns.
 
     pub fn parseAndCompileAll(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
-        while (self.tryPeek()) |_| {
-            try self.statementRule(codegen, allocator);
+        while (self.tryPeek()) |t| {
+            switch (t.tokenType) {
+                .leftBrace => try self.blockRule(codegen, allocator),
+                else => try self.statementRule(codegen, allocator),
+            }
+        }
+    }
+
+    fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!void {
+        const opening: scanning.Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        if (opening.tokenType != .leftBrace) {
+            return ParsingError.ExpectedOpeningBrace;
+        }
+        self.advance();
+        codegen.enterScope();
+        try self.blockBodyRule(codegen, allocator);
+        const closing: scanning.Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        if (closing.tokenType != .rightBrace) {
+            return ParsingError.ExpectedClosingBrace;
+        }
+        codegen.exitScope();
+        self.advance();
+    }
+
+    fn blockBodyRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
+        while (self.tryPeek()) |t| {
+            switch (t.tokenType) {
+                .leftBrace => try self.blockRule(codegen, allocator),
+                .rightBrace => return,
+                else => try self.statementRule(codegen, allocator),
+            }
         }
     }
 

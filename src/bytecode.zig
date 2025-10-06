@@ -134,6 +134,14 @@ pub const BytecodeGenerator = struct {
         self.stringBuffer.deinit(self.allocator);
     }
 
+    pub fn enterScope(_: *BytecodeGenerator) void {
+        std.debug.print("entered scope\n", .{});
+    }
+
+    pub fn exitScope(_: *BytecodeGenerator) void {
+        std.debug.print("exited scope\n", .{});
+    }
+
     pub fn registerVariable(self: *BytecodeGenerator, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
         const handle = try self.pushOperand(name, typeInfo);
         try self.variableRegistry.put(self.allocator, name, handle);
