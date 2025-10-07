@@ -3,6 +3,7 @@ const std = @import("std");
 const bytecode = @import("bytecode.zig");
 
 // program        → ( statement )* EOF
+// function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")* (IDENTIFIER ":" type) )? ")" ( type )? block
 // block          → "{" ( statement )* "}"
 // statement      → ( decl | expression ) ";"
 // declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
@@ -33,12 +34,16 @@ pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
     ExpectedSemicolon,
+    ArgLimit128,
+    ExpectedOpeningParen,
+    ExpectedClosingParen,
     ExpectedOpeningBrace,
     ExpectedClosingBrace,
     ExpectedIdentifier,
     ExpectedExpression,
     ExpectedType,
     CustomTypesNotYetSupported,
+    ArgumentCannotBeTypeVoid,
     VariableDeclarationMustBeTyped,
 };
 
@@ -119,9 +124,103 @@ pub const AstParser = struct {
         while (self.tryPeek()) |t| {
             switch (t.tokenType) {
                 .leftBrace => try self.blockRule(codegen, allocator),
+                .kwFun => try self.functionDeclarationRule(codegen, allocator),
                 else => try self.statementRule(codegen, allocator),
             }
         }
+    }
+
+    fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
+        const fun = self.tryPeek() orelse return ParsingError.ExpectedToken;
+        if (fun.tokenType != .kwFun) {
+            return ParsingError.ExpectedToken;
+        }
+        self.advance();
+        const funNameT = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+        if (funNameT.tokenType != .identifier) {
+            return ParsingError.ExpectedIdentifier;
+        }
+        self.advance();
+        const open = self.tryPeek() orelse return ParsingError.ExpectedOpeningParen;
+        if (open.tokenType != .leftParen) {
+            return ParsingError.ExpectedOpeningParen;
+        }
+        self.advance();
+
+        const ArgFormat = struct {
+            name: []u8,
+            type: enum {
+                number,
+                bool,
+                string,
+            },
+        };
+
+        var args: [128]ArgFormat = undefined;
+        var argCount: usize = 0;
+
+        while (self.tryPeek()) |t| {
+            if (t.tokenType == .rightParen) {
+                break;
+            }
+            const argNameT = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+            if (argNameT.tokenType != .identifier) {
+                return ParsingError.ExpectedIdentifier;
+            }
+            self.advance();
+            const colon = self.tryPeek() orelse return ParsingError.ExpectedType;
+            if (colon.tokenType != .colon) {
+                return ParsingError.ExpectedType;
+            }
+            self.advance();
+            const argType = self.tryPeek() orelse return ParsingError.ExpectedType;
+            const argName = argNameT.source orelse unreachable;
+            args[argCount] = switch (argType.tokenType) {
+                .tyBool => .{ .name = argName, .type = .bool },
+                .tyNum => .{ .name = argName, .type = .number },
+                .tyString => .{ .name = argName, .type = .string },
+                .tyVoid => return ParsingError.ArgumentCannotBeTypeVoid,
+                else => return ParsingError.ExpectedType,
+            };
+            self.advance();
+            if (argCount == 127) {
+                return ParsingError.ArgLimit128;
+            } else {
+                argCount += 1;
+            }
+        }
+
+        const close = self.tryPeek() orelse return ParsingError.ExpectedClosingParen;
+        if (close.tokenType != .rightParen) {
+            return ParsingError.ExpectedClosingParen;
+        }
+        self.advance();
+        const retType = self.tryPeek() orelse return self.blockRule(codegen, allocator);
+        switch (retType.tokenType) {
+            .tyBool => {},
+            .tyNum => {},
+            .tyString => {},
+            .tyVoid => {},
+            // Start of function body. We assume this means void.
+            .rightBrace => {},
+            else => return ParsingError.ExpectedType,
+        }
+        self.advance();
+        const funName = funNameT.source orelse unreachable;
+        std.debug.print("DECLARE FUN \"{s}\"\n", .{funName});
+        for (0..argCount) |i| {
+            const arg = args[i];
+            const t = switch (arg.type) {
+                .number => "number",
+                .string => "string",
+                .bool => "bool",
+            };
+            std.debug.print("  ARG \"{s}\" : {s}\n", .{ arg.name, t });
+        }
+        // TODO: this block rule contains the function. ideally, we have
+        // codegen functions such as enterFunction/exitFunction to manage
+        // scoping and stuff
+        return self.blockRule(codegen, allocator);
     }
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!void {

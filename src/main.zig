@@ -137,12 +137,20 @@ pub fn main() !void {
 
 fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize, offendingToken: scanning.Token) !void {
     const Parser = parsing.ParsingError;
+    const CodeGen = bytecode.CompilationError;
     switch (err) {
         Parser.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
+        Parser.ExpectedOpeningBrace => _ = try out.write("expected opening brace\n"),
         Parser.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
+        Parser.ExpectedOpeningParen => _ = try out.write("expected opening parenthesis\n"),
+        Parser.ExpectedClosingParen => _ = try out.write("expected closing parenthesis\n"),
+        Parser.ArgLimit128 => _ = try out.write("you can't have more arguments sorry\nhave you tried like a di framework or something\n"),
+        Parser.ArgumentCannotBeTypeVoid => _ = try out.write("argument cannot have type \"void\"\n"),
         Parser.ExpectedToken => _ = try out.write("expected a token\n"),
         Parser.ExpectedIdentifier => _ = try out.write("expected a name\n"),
         Parser.UnexpectedToken => _ = try out.write("unexpected token!\n"),
+
+        CodeGen.VariableNotDeclared => _ = try out.write("this variable doesn't exist in this scope!\n"),
         else => return err,
     }
     _ = try out.write("token:\n");

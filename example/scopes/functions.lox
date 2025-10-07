@@ -1,0 +1,10 @@
+fun foo() void {
+    var bat = 6 * 7;
+}
+
+fun bar(baz: number) number {
+    17 * 2;
+}
+
+foo();
+bar(27);

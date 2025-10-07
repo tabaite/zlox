@@ -110,8 +110,51 @@ pub const Instruction = struct {
     op: Operation,
 };
 
+fn Stack(T: type) type {
+    return struct {
+        const Self = @This();
+        backing: []T,
+        used: usize,
+        pub fn init(allocator: Allocator) !Self {
+            return .{ .used = 0, .backing = try allocator.alloc(T, 2048) };
+        }
+        pub fn push(self: *Self, item: T) void {
+            self.backing[self.used] = item;
+            self.used += 1;
+        }
+        pub fn top(self: *Self) ?*T {
+            if (self.used == 0) {
+                return null;
+            }
+            return &self.backing[self.used - 1];
+        }
+        pub fn height(self: Self) usize {
+            return self.used;
+        }
+        pub fn pop(self: *Self) ?T {
+            if (self.used == 0) {
+                return null;
+            }
+            const item = self.backing[self.used - 1];
+            self.used -= 1;
+            return item;
+        }
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            allocator.free(self.backing);
+        }
+    };
+}
+
 pub const BytecodeGenerator = struct {
     allocator: Allocator,
+    // We use 2 stacks to track the state of our variables.
+    // scopeExtentStack tracks the amount of variables that are pushed in a scope.
+    // scopeNamesStack tracks the actual names that are declared.
+    // When a scope is entered, we push a new number onto scopeExtentStack.
+    // When a variable is declared, we add 1 to the number on the top of scopeExtentStack.
+    // When the scope exits, pop scopeExtentStack, and deregister that amount of variables from the top of scopeNamesStack.
+    scopeExtentStack: Stack(usize),
+    scopeNamesStack: Stack([]u8),
     variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
     stringBuffer: std.ArrayListUnmanaged(u8),
@@ -121,6 +164,8 @@ pub const BytecodeGenerator = struct {
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
             .allocator = allocator,
+            .scopeExtentStack = try Stack(usize).init(allocator),
+            .scopeNamesStack = try Stack([]u8).init(allocator),
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
@@ -129,22 +174,35 @@ pub const BytecodeGenerator = struct {
         };
     }
     pub fn deinit(self: *BytecodeGenerator) void {
+        self.scopeExtentStack.deinit(self.allocator);
+        self.scopeNamesStack.deinit(self.allocator);
         self.variableRegistry.deinit(self.allocator);
         self.bytecodeList.deinit(self.allocator);
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn enterScope(_: *BytecodeGenerator) void {
+    pub fn enterScope(self: *BytecodeGenerator) void {
+        self.scopeExtentStack.push(0);
         std.debug.print("entered scope\n", .{});
     }
 
-    pub fn exitScope(_: *BytecodeGenerator) void {
+    pub fn exitScope(self: *BytecodeGenerator) void {
+        const num = self.scopeExtentStack.pop() orelse 0;
+        for (0..num) |_| {
+            const name = self.scopeNamesStack.pop() orelse break;
+            _ = self.variableRegistry.remove(name);
+        }
         std.debug.print("exited scope\n", .{});
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
+        self.scopeNamesStack.push(name);
         const handle = try self.pushOperand(name, typeInfo);
         try self.variableRegistry.put(self.allocator, name, handle);
+        const scopeVarCount = self.scopeExtentStack.top();
+        if (scopeVarCount != null) {
+            (scopeVarCount orelse unreachable).* += 1;
+        }
         return handle;
     }
 
