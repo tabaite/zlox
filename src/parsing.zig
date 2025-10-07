@@ -70,20 +70,6 @@ pub const UnaryExprType = enum {
     negateBool,
 };
 
-pub const Type = enum(u8) {
-    number,
-    string,
-    bool,
-    nil,
-};
-
-pub const Literal = union(Type) {
-    number: f64,
-    string: []u8,
-    bool: bool,
-    nil,
-};
-
 const TokenToBinaryExpr = struct {
     key: scanning.TokenType,
     value: BinaryExprType,
@@ -434,14 +420,13 @@ pub const AstParser = struct {
             }
         }
 
-        const lit: Literal = switch (token.tokenType) {
-            .number => .{ .number = std.fmt.parseFloat(f64, token.source orelse "0") catch 0 },
-            .string => .{ .string = token.source orelse unreachable },
-            .kwNil => .nil,
-            .kwTrue => .{ .bool = true },
-            .kwFalse => .{ .bool = false },
+        return switch (token.tokenType) {
+            .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, token.source orelse "0") catch 0),
+            .string => try codegen.newStringLit(token.source orelse unreachable),
+            .kwNil => CodeGen.newNilLit(),
+            .kwTrue => comptime CodeGen.newBoolLit(true),
+            .kwFalse => comptime CodeGen.newBoolLit(false),
             else => return error.UnexpectedToken,
         };
-        return try codegen.newLiteral(lit);
     }
 };

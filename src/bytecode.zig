@@ -249,7 +249,7 @@ pub const BytecodeGenerator = struct {
         const typeInfo: InitializeInformation = switch (info) {
             .provided => |t| .{ .value = t.initial orelse zero: {
                 switch (t.type) {
-                    .string => break :zero try self.newLiteral(.{ .string = "" }),
+                    .string => break :zero try self.newStringLit(""),
                     else => |ty| break :zero .{ .operand = .{ .item = 0 }, .type = ty },
                 }
             }, .type = t.type },
@@ -378,34 +378,28 @@ pub const BytecodeGenerator = struct {
         try self.bytecodeList.append(self.allocator, item);
         return dest;
     }
-    pub fn newLiteral(self: *BytecodeGenerator, lit: parsing.Literal) !HandledOperand {
-        switch (lit) {
-            .string => |s| {
-                std.debug.print("pushed \"{s}\" BUT not really since strings are hard\n", .{s});
+    pub fn newStringLit(self: *BytecodeGenerator, string: []u8) !HandledOperand {
+        // allocate shit ig
+        const strStart = self.stringBuffer.items.len;
+        try self.stringBuffer.appendSlice(self.allocator, string);
 
-                // allocate shit ig
-                const strStart = self.stringBuffer.items.len;
-                try self.stringBuffer.appendSlice(self.allocator, s);
+        const start = self.stackHeight;
+        self.stackHeight += 2 * @sizeOf(u64);
+        const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
+        try self.bytecodeList.append(self.allocator, ptr);
+        const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(string.len) }, .b = .{ .item = 8 }, .dest = 0 };
+        try self.bytecodeList.append(self.allocator, len);
 
-                const start = self.stackHeight;
-                self.stackHeight += 2 * @sizeOf(u64);
-                const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
-                try self.bytecodeList.append(self.allocator, ptr);
-                const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(s.len) }, .b = .{ .item = 8 }, .dest = 0 };
-                try self.bytecodeList.append(self.allocator, len);
-
-                return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
-            },
-            .number => |n| {
-                std.debug.print("pushed number {d}\n", .{n});
-                return HandledOperand{ .operand = .{ .item = @bitCast(n) }, .type = .numberLit };
-            },
-            .bool => |b| {
-                std.debug.print("pushed {s}\n", .{if (b) "true" else "false"});
-                return HandledOperand{ .operand = .{ .item = @as(u64, @intFromBool(b)) }, .type = .boolLit };
-            },
-            .nil => return .{ .operand = RawOperand.NULL_HANDLE, .type = .nil },
-        }
+        return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
+    }
+    pub fn newNumberLit(number: f64) HandledOperand {
+        return HandledOperand{ .operand = .{ .item = @bitCast(number) }, .type = .numberLit };
+    }
+    pub fn newBoolLit(boolean: bool) HandledOperand {
+        return HandledOperand{ .operand = .{ .item = @as(u64, @intFromBool(boolean)) }, .type = .boolLit };
+    }
+    pub fn newNilLit() HandledOperand {
+        return .{ .operand = RawOperand.NULL_HANDLE, .type = .nil };
     }
 };
 
