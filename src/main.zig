@@ -92,7 +92,7 @@ pub fn main() !void {
             var astParser = parsing.AstParser.new(&iter);
 
             astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+                try handleParseError(e, stderrAny, iter, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
                 return;
             };
 
@@ -111,7 +111,7 @@ pub fn main() !void {
             _ = try stderr.write("\nbytecode:\n");
 
             astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+                try handleParseError(e, stderrAny, iter, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
                 return;
             };
 
@@ -141,7 +141,7 @@ pub fn main() !void {
     }
 }
 
-fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position: usize, offendingToken: scanning.Token) !void {
+fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: scanning.TokenIterator, offendingToken: scanning.Token) !void {
     const Parser = parsing.ParsingError;
     const CodeGen = bytecode.CompilationError;
     switch (err) {
@@ -162,33 +162,34 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position
     _ = try out.write("token:\n");
     try scanning.printToken(offendingToken, out);
     _ = try out.write("\n");
+
+    const position = source.position;
+    const line = source.lineNumber;
+    const length = source.source.len;
+
     var lineStart: usize = 0;
-    var lineEnd: usize = source.len;
+    var lineEnd: usize = length;
     for (0..position) |t| {
         const pos = position - t;
-        if (source[pos] == '\n') {
-            lineStart = pos;
+        if (source.source[pos] == '\n') {
+            lineStart = pos + 1;
             break;
         }
     }
-    for (position..source.len) |pos| {
-        if (source[pos] == '\n') {
-            lineEnd = pos;
+    for (position..length) |pos| {
+        if (source.source[pos] == '\n') {
+            lineEnd = pos - 1;
             break;
         }
     }
-    _ = try out.write(source[0..lineStart]);
-    try out.print("\x1b[31;1m{s}\x1b[0m", .{source[lineStart..lineEnd]});
-    _ = try out.write(source[lineEnd..]);
-}
-
-fn handleRuntimeError(err: anyerror, out: std.io.AnyWriter) !void {
-    const RuntimeError = runtime.RuntimeError;
-    switch (err) {
-        RuntimeError.OutOfStackBounds => _ = try out.write("oob\n"),
-        RuntimeError.StackOverflow => _ = try out.write("stack OVERFLOW!"),
-        RuntimeError.UndeclaredVariableAccessed => _ = try out.write("tried to access a variable that does not exist within the current scope"),
-        RuntimeError.VariableAlreadyDeclared => _ = try out.write("this variable name has already been declared!"),
-        else => return err,
+    for (lineStart..lineEnd) |a| {
+        switch (source.source[a]) {
+            ' ', '\t', '\r' => {},
+            else => {
+                lineStart = a;
+                break;
+            },
+        }
     }
+    try out.print("line {d}: \x1b[31;1m{s}\x1b[0m\n", .{ line, source.source[lineStart..lineEnd] });
 }
