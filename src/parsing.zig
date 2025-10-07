@@ -367,7 +367,7 @@ pub const AstParser = struct {
             .leftParen => {
                 self.advance();
 
-                var args: [32]Handle = undefined;
+                var args: [128]Handle = undefined;
                 var argNums: usize = 0;
                 while (self.tryPeek()) |t| {
                     if (t.tokenType == .rightParen) {
@@ -381,7 +381,11 @@ pub const AstParser = struct {
                     if (seperator.tokenType != .comma) {
                         break;
                     }
-                    self.advance();
+                    if (argNums < 128) {
+                        self.advance();
+                    } else {
+                        return ParsingError.ArgLimit128;
+                    }
                 }
 
                 const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
