@@ -91,7 +91,10 @@ pub fn main() !void {
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter);
 
-            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
+                try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+                return;
+            };
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -107,7 +110,10 @@ pub fn main() !void {
 
             _ = try stderr.write("\nbytecode:\n");
 
-            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
+                try handleParseError(e, stderrAny, iter.source, iter.position, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
+                return;
+            };
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -156,9 +162,24 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: []u8, position
     _ = try out.write("token:\n");
     try scanning.printToken(offendingToken, out);
     _ = try out.write("\n");
-    _ = try out.write(source[0..position]);
-    _ = try out.write("<HERE>");
-    _ = try out.write(source[position..]);
+    var lineStart: usize = 0;
+    var lineEnd: usize = source.len;
+    for (0..position) |t| {
+        const pos = position - t;
+        if (source[pos] == '\n') {
+            lineStart = pos;
+            break;
+        }
+    }
+    for (position..source.len) |pos| {
+        if (source[pos] == '\n') {
+            lineEnd = pos;
+            break;
+        }
+    }
+    _ = try out.write(source[0..lineStart]);
+    try out.print("\x1b[31;1m{s}\x1b[0m", .{source[lineStart..lineEnd]});
+    _ = try out.write(source[lineEnd..]);
 }
 
 fn handleRuntimeError(err: anyerror, out: std.io.AnyWriter) !void {
