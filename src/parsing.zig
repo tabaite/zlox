@@ -133,16 +133,7 @@ pub const AstParser = struct {
         }
         self.advance();
 
-        const ArgFormat = struct {
-            name: []u8,
-            type: enum {
-                number,
-                bool,
-                string,
-            },
-        };
-
-        var args: [128]ArgFormat = undefined;
+        var args: [128]bytecode.Type = undefined;
         var argCount: usize = 0;
 
         while (self.tryPeek()) |t| {
@@ -160,11 +151,10 @@ pub const AstParser = struct {
             }
             self.advance();
             const argType = self.tryPeek() orelse return ParsingError.ExpectedType;
-            const argName = argNameT.source orelse unreachable;
             args[argCount] = switch (argType.tokenType) {
-                .tyBool => .{ .name = argName, .type = .bool },
-                .tyNum => .{ .name = argName, .type = .number },
-                .tyString => .{ .name = argName, .type = .string },
+                .tyBool => .bool,
+                .tyNum => .number,
+                .tyString => .string,
                 .tyVoid => return ParsingError.ArgumentCannotBeTypeVoid,
                 else => return ParsingError.ExpectedType,
             };
@@ -181,32 +171,34 @@ pub const AstParser = struct {
             return ParsingError.ExpectedClosingParen;
         }
         self.advance();
-        const retType = self.tryPeek() orelse return self.blockRule(codegen, allocator);
-        switch (retType.tokenType) {
-            .tyBool => {},
-            .tyNum => {},
-            .tyString => {},
-            .tyVoid => {},
+        const rt = self.tryPeek() orelse return ParsingError.ExpectedType;
+        const retType: bytecode.Type = ret: switch (rt.tokenType) {
+            .tyBool => {
+                self.advance();
+                break :ret .bool;
+            },
+            .tyNum => {
+                self.advance();
+                break :ret .number;
+            },
+            .tyString => {
+                self.advance();
+                break :ret .string;
+            },
             // Start of function body. We assume this means void.
-            .rightBrace => {},
+            //         v
+            .tyVoid => {
+                self.advance();
+                break :ret .nil;
+            },
+            .leftBrace => break :ret .nil,
             else => return ParsingError.ExpectedType,
-        }
-        self.advance();
+        };
         const funName = funNameT.source orelse unreachable;
-        std.debug.print("DECLARE FUN \"{s}\"\n", .{funName});
-        for (0..argCount) |i| {
-            const arg = args[i];
-            const t = switch (arg.type) {
-                .number => "number",
-                .string => "string",
-                .bool => "bool",
-            };
-            std.debug.print("  ARG \"{s}\" : {s}\n", .{ arg.name, t });
-        }
-        // TODO: this block rule contains the function. ideally, we have
-        // codegen functions such as enterFunction/exitFunction to manage
-        // scoping and stuff
-        return self.blockRule(codegen, allocator);
+        try codegen.enterFunction(funName, args[0..argCount], retType);
+        // Function body
+        _ = try self.blockRule(codegen, allocator);
+        codegen.exitFunction();
     }
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!void {

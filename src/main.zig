@@ -157,6 +157,8 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: scanning.Token
         Parser.UnexpectedToken => _ = try out.write("unexpected token!\n"),
 
         CodeGen.VariableNotDeclared => _ = try out.write("this variable doesn't exist in this scope!\n"),
+        CodeGen.MainFunctionCannotHaveArgs => _ = try out.write("main function cannot have arguments\n"),
+        CodeGen.MainFunctionCannotReturnValue => _ = try out.write("main function cannot return anything\n"),
         else => return err,
     }
     _ = try out.write("token:\n");

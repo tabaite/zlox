@@ -7,6 +7,8 @@ pub const CompilationError = error{
     IncompatibleType,
     CannotMoveIntoLiteral,
     VariableNotDeclared,
+    MainFunctionCannotHaveArgs,
+    MainFunctionCannotReturnValue,
 };
 
 // How literals work:
@@ -188,6 +190,39 @@ pub const BytecodeGenerator = struct {
         self.bytecodeList.deinit(self.allocator);
         self.stringBuffer.deinit(self.allocator);
     }
+
+    pub fn enterFunction(_: *BytecodeGenerator, name: []u8, argumentTypes: []Type, retType: Type) !void {
+        if (std.mem.eql(u8, name, "main")) {
+            if (argumentTypes.len != 0) {
+                return CompilationError.MainFunctionCannotHaveArgs;
+            }
+            if (retType != .nil) {
+                return CompilationError.MainFunctionCannotReturnValue;
+            }
+            std.debug.print("ENTRY POINT main\n", .{});
+            return;
+        }
+        std.debug.print("function \"{s}\" ( ", .{name});
+        for (0..argumentTypes.len) |i| {
+            const ty = switch (argumentTypes[i]) {
+                .nil => "void",
+                .number, .numberLit => "num",
+                .bool, .boolLit => "bool",
+                .string => "string",
+            };
+
+            std.debug.print("(type {s}) ", .{ty});
+        }
+        const ty = switch (retType) {
+            .nil => "void",
+            .number, .numberLit => "num",
+            .bool, .boolLit => "bool",
+            .string => "string",
+        };
+        std.debug.print(") RETURNS {s}\n", .{ty});
+    }
+
+    pub fn exitFunction(_: *BytecodeGenerator) void {}
 
     pub fn enterScope(self: *BytecodeGenerator) void {
         self.scopeExtentStack.push(.{});

@@ -6,5 +6,9 @@ fun bar(baz: number) number {
     17 * 2;
 }
 
+fun main() {
+
+}
+
 foo();
 bar(27);
