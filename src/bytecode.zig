@@ -259,13 +259,6 @@ pub const BytecodeGenerator = struct {
 
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
-        {
-            const top = self.scopeExtentStack.top();
-            if (top != null) {
-                (top orelse unreachable).numItems += 1;
-            }
-        }
-
         // This can store any (built-in) type.
         const variableSize = 1;
         const InitializeInformation = struct { value: HandledOperand, type: Type };
@@ -303,6 +296,13 @@ pub const BytecodeGenerator = struct {
             },
             .nil => HandledOperand.NIL,
             else => {
+                {
+                    const top = self.scopeExtentStack.top();
+                    if (top != null) {
+                        (top orelse unreachable).numItems += 1;
+                    }
+                }
+
                 const arg: ArgTypes = switch (typeInfo.value.type) {
                     .numberLit, .boolLit => .bothLiteral,
                     else => .bothHandle,
@@ -412,6 +412,11 @@ pub const BytecodeGenerator = struct {
         try self.bytecodeList.append(self.allocator, ptr);
         const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(string.len) }, .b = .{ .item = 8 }, .dest = 0 };
         try self.bytecodeList.append(self.allocator, len);
+
+        const top = self.scopeExtentStack.top();
+        if (top != null) {
+            (top orelse unreachable).numItems += 2;
+        }
 
         return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };
     }
