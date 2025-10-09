@@ -99,6 +99,7 @@ pub const Runtime = struct {
                     };
                     _ = self.variableStack.push(val);
                 },
+                .pop => self.variableStack.pop(),
                 else => {
                     const a: u64 = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a.item,
@@ -126,7 +127,7 @@ pub const Runtime = struct {
                         .less => @as(u64, @intCast(@intFromBool(@as(f64, @bitCast(a)) < @as(f64, @bitCast(b))))),
                         .bAnd => @as(u64, @intCast(@intFromBool((a != 0) and (b != 0)))),
                         .bOr => @as(u64, @intCast(@intFromBool((a != 0) or (b != 0)))),
-                        .pushItem => 0,
+                        else => 0,
                     };
                     self.variableStack.set(ins.dest, .{ .item = result });
                 },

@@ -38,6 +38,9 @@ pub const OpCode = enum(u30) {
     // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
     // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
     pushItem,
+    // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
+    // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
+    pop,
     // A: Number to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
     negateNumber,
     // A: Bool to be negated, B: Unused, Dest: Where to store the result, Arg Type: Used for A
@@ -146,6 +149,11 @@ fn Stack(T: type) type {
 }
 
 pub const BytecodeGenerator = struct {
+    const ScopeExtent = struct {
+        numVars: usize = 0,
+        numItems: usize = 0,
+    };
+
     allocator: Allocator,
     // We use 2 stacks to track the state of our variables.
     // scopeExtentStack tracks the amount of variables that are pushed in a scope.
@@ -153,7 +161,7 @@ pub const BytecodeGenerator = struct {
     // When a scope is entered, we push a new number onto scopeExtentStack.
     // When a variable is declared, we add 1 to the number on the top of scopeExtentStack.
     // When the scope exits, pop scopeExtentStack, and deregister that amount of variables from the top of scopeNamesStack.
-    scopeExtentStack: Stack(usize),
+    scopeExtentStack: Stack(ScopeExtent),
     scopeNamesStack: Stack([]u8),
     variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
@@ -164,7 +172,7 @@ pub const BytecodeGenerator = struct {
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
             .allocator = allocator,
-            .scopeExtentStack = try Stack(usize).init(allocator),
+            .scopeExtentStack = try Stack(ScopeExtent).init(allocator),
             .scopeNamesStack = try Stack([]u8).init(allocator),
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
@@ -182,15 +190,18 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn enterScope(self: *BytecodeGenerator) void {
-        self.scopeExtentStack.push(0);
+        self.scopeExtentStack.push(.{});
         std.debug.print("entered scope\n", .{});
     }
 
-    pub fn exitScope(self: *BytecodeGenerator) void {
-        const num = self.scopeExtentStack.pop() orelse 0;
-        for (0..num) |_| {
+    pub fn exitScope(self: *BytecodeGenerator) !void {
+        const num: ScopeExtent = self.scopeExtentStack.pop() orelse .{};
+        for (0..num.numVars) |_| {
             const name = self.scopeNamesStack.pop() orelse break;
             _ = self.variableRegistry.remove(name);
+        }
+        for (0..num.numItems) |_| {
+            try self.popFromStack();
         }
         std.debug.print("exited scope\n", .{});
     }
@@ -201,7 +212,7 @@ pub const BytecodeGenerator = struct {
         try self.variableRegistry.put(self.allocator, name, handle);
         const scopeVarCount = self.scopeExtentStack.top();
         if (scopeVarCount != null) {
-            (scopeVarCount orelse unreachable).* += 1;
+            (scopeVarCount orelse unreachable).numVars += 1;
         }
         return handle;
     }
@@ -241,8 +252,20 @@ pub const BytecodeGenerator = struct {
         return .{ .type = retType, .operand = dest.operand };
     }
 
+    pub fn popFromStack(self: *BytecodeGenerator) !void {
+        self.stackHeight -= 1;
+        try self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 });
+    }
+
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
+        {
+            const top = self.scopeExtentStack.top();
+            if (top != null) {
+                (top orelse unreachable).numItems += 1;
+            }
+        }
+
         // This can store any (built-in) type.
         const variableSize = 1;
         const InitializeInformation = struct { value: HandledOperand, type: Type };
@@ -438,6 +461,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
                 .less => "LES",
                 .bAnd => "AND",
                 .bOr => "OR",
+                .pop => "POP",
                 else => @panic("ahhhh what the hell"),
             };
             switch (ins.op.argType) {

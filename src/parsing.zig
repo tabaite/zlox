@@ -221,7 +221,7 @@ pub const AstParser = struct {
         if (closing.tokenType != .rightBrace) {
             return ParsingError.ExpectedClosingBrace;
         }
-        codegen.exitScope();
+        try codegen.exitScope();
         self.advance();
     }
 
