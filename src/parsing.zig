@@ -34,6 +34,7 @@ const ErrorSet = ParsingError || bytecode.CompilationError;
 const ParseErrorSet = Allocator.Error || ErrorSet;
 
 pub const ParsingError = error{
+    GlobalScopeNoLongerUsable,
     UnexpectedToken,
     ExpectedToken,
     ExpectedKwFun,
@@ -127,7 +128,10 @@ pub const AstParser = struct {
             switch (t.tokenType) {
                 .leftBrace => try self.blockRule(codegen, allocator),
                 .kwFun => try self.functionDeclarationRule(codegen, allocator),
-                else => try self.statementRule(codegen, allocator),
+                else => {
+                    try self.recordErrorTrace(ParsingError.GlobalScopeNoLongerUsable);
+                    try self.statementRule(codegen, allocator);
+                },
             }
         }
     }

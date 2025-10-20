@@ -98,6 +98,7 @@ pub fn main() !void {
                 for (errs) |trace| {
                     try handleParseError(trace, stderrAny);
                 }
+                return;
             }
 
             for (codegen.bytecodeList.items) |ins| {
@@ -121,6 +122,7 @@ pub fn main() !void {
                 for (errs) |trace| {
                     try handleParseError(trace, stderrAny);
                 }
+                return;
             }
 
             for (codegen.bytecodeList.items) |ins| {
@@ -165,6 +167,7 @@ fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
         Parser.ExpectedComma => "expected a comma\n",
         Parser.ExpectedIdentifier => "expected a name\n",
         Parser.UnexpectedToken => "unexpected token!\n",
+        Parser.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
 
         CodeGen.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
         CodeGen.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
