@@ -152,25 +152,25 @@ pub fn main() !void {
 fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
     const Parser = parsing.ParsingError;
     const CodeGen = bytecode.CompilationError;
-    switch (trace.err) {
-        Parser.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
-        Parser.ExpectedOpeningBrace => _ = try out.write("expected opening brace\n"),
-        Parser.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
-        Parser.ExpectedOpeningParen => _ = try out.write("expected opening parenthesis\n"),
-        Parser.ExpectedClosingParen => _ = try out.write("expected closing parenthesis\n"),
-        Parser.ArgLimit128 => _ = try out.write("you can't have more arguments sorry\nhave you tried like a di framework or something\n"),
-        Parser.ArgumentCannotBeTypeVoid => _ = try out.write("argument cannot have type \"void\"\n"),
-        Parser.ExpectedToken => _ = try out.write("expected a token\n"),
-        Parser.ExpectedKwFun => _ = try out.write("expected the keyword \"fun\"\n"),
-        Parser.ExpectedComma => _ = try out.write("expected a comma\n"),
-        Parser.ExpectedIdentifier => _ = try out.write("expected a name\n"),
-        Parser.UnexpectedToken => _ = try out.write("unexpected token!\n"),
+    const message = switch (trace.err) {
+        Parser.ExpectedSemicolon => "expected semicolon\n",
+        Parser.ExpectedOpeningBrace => "expected opening brace\n",
+        Parser.ExpectedClosingBrace => "expected closing brace\n",
+        Parser.ExpectedOpeningParen => "expected opening parenthesis\n",
+        Parser.ExpectedClosingParen => "expected closing parenthesis\n",
+        Parser.ArgLimit128 => "you can't have more arguments sorry\nhave you tried like a di framework or something\n",
+        Parser.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"\n",
+        Parser.ExpectedToken => "expected a token\n",
+        Parser.ExpectedKwFun => "expected the keyword \"fun\"\n",
+        Parser.ExpectedComma => "expected a comma\n",
+        Parser.ExpectedIdentifier => "expected a name\n",
+        Parser.UnexpectedToken => "unexpected token!\n",
 
-        CodeGen.VariableNotDeclared => _ = try out.write("this variable doesn't exist in this scope!\n"),
-        CodeGen.MainFunctionCannotHaveArgs => _ = try out.write("main function cannot have arguments\n"),
-        CodeGen.MainFunctionCannotReturnValue => _ = try out.write("main function cannot return anything\n"),
+        CodeGen.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
+        CodeGen.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
+        CodeGen.MainFunctionCannotReturnValue => "main function cannot return anything\n",
         else => return trace.err,
-    }
+    };
 
-    try out.print("line {d}: \x1b[31;1m{s}\x1b[0m\n\n", .{ trace.lineNum, trace.line });
+    try out.print("error: {s}\nline {d}: \x1b[31;1m{s}\x1b[0m\n\n", .{ message, trace.lineNum, trace.line });
 }
