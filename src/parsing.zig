@@ -4,6 +4,7 @@ const bytecode = @import("bytecode.zig");
 
 // program        → ( statement )* EOF
 // function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")* (IDENTIFIER ":" type) )? ")" ( type )? block
+// arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
 // block          → "{" ( statement )* "}"
 // statement      → ( decl | expression ) ";"
 // declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
@@ -22,13 +23,15 @@ const bytecode = @import("bytecode.zig");
 //                | "(" expression ")"
 // type           → "number" | "bool" | "string" | "void"
 
+const Token = scanning.Token;
 const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 
 const Handle = bytecode.HandledOperand;
 
-const ParseErrorSet = ParsingError || Allocator.Error || bytecode.CompilationError;
+const ErrorSet = ParsingError || bytecode.CompilationError;
+const ParseErrorSet = Allocator.Error || ErrorSet;
 
 pub const ParsingError = error{
     UnexpectedToken,
@@ -45,6 +48,12 @@ pub const ParsingError = error{
     CustomTypesNotYetSupported,
     ArgumentCannotBeTypeVoid,
     VariableDeclarationMustBeTyped,
+};
+
+pub const ErrorTrace = struct {
+    err: ErrorSet,
+    lineNum: u32,
+    line: []u8,
 };
 
 pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
@@ -86,14 +95,15 @@ fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBi
 
 pub const AstParser = struct {
     iter: *scanning.TokenIterator,
-    lastToken: ?scanning.Token,
+    lastToken: ?Token,
+    errorList: std.ArrayList(ErrorTrace),
 
-    pub fn new(iter: *scanning.TokenIterator) AstParser {
-        return .{ .iter = iter, .lastToken = iter.next() };
+    pub fn new(iter: *scanning.TokenIterator, allocator: Allocator) AstParser {
+        return .{ .iter = iter, .lastToken = iter.next(), .errorList = .init(allocator) };
     }
 
     // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
-    pub fn tryPeek(self: *AstParser) ?scanning.Token {
+    pub fn tryPeek(self: *AstParser) ?Token {
         return self.lastToken;
     }
 
@@ -106,6 +116,10 @@ pub const AstParser = struct {
     // The function mutates the state of the parser, moving the position forward
     // to the token immediately after the expression it returns.
 
+    pub fn recoverErrorList(self: *AstParser) []ErrorTrace {
+        return self.errorList.items;
+    }
+
     pub fn parseAndCompileAll(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
         while (self.tryPeek()) |t| {
             switch (t.tokenType) {
@@ -116,62 +130,101 @@ pub const AstParser = struct {
         }
     }
 
+    fn recordErrorTrace(self: *AstParser, err: ParsingError) !void {
+        var start: usize = 0;
+        var end = self.iter.source.len;
+
+        const pos = self.iter.position;
+        for (0..pos) |i| {
+            const idx = pos - i - 1;
+            if (self.iter.source[idx] == '\n') {
+                start = idx;
+                break;
+            }
+        }
+        for (pos..self.iter.source.len) |i| {
+            if (self.iter.source[i] == '\n') {
+                end = i;
+                break;
+            }
+        }
+        const trace: ErrorTrace = .{ .err = err, .lineNum = self.iter.lineNumber, .line = self.iter.source[start..end] };
+        try self.errorList.append(trace);
+    }
+
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
-        const fun = self.tryPeek() orelse return ParsingError.ExpectedToken;
+        const fun: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (fun.tokenType != .kwFun) {
-            return ParsingError.ExpectedToken;
+            try self.recordErrorTrace(ParsingError.ExpectedToken);
         }
         self.advance();
-        const funNameT = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+        const funNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (funNameT.tokenType != .identifier) {
-            return ParsingError.ExpectedIdentifier;
+            try self.recordErrorTrace(ParsingError.ExpectedIdentifier);
         }
         self.advance();
-        const open = self.tryPeek() orelse return ParsingError.ExpectedOpeningParen;
+        const open: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (open.tokenType != .leftParen) {
-            return ParsingError.ExpectedOpeningParen;
+            try self.recordErrorTrace(ParsingError.ExpectedOpeningParen);
         }
         self.advance();
 
         var args: [128]bytecode.Type = undefined;
         var argCount: usize = 0;
 
-        while (self.tryPeek()) |t| {
+        args: while (self.tryPeek()) |t| {
             if (t.tokenType == .rightParen) {
-                break;
+                break :args;
             }
-            const argNameT = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+            const argNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
             if (argNameT.tokenType != .identifier) {
-                return ParsingError.ExpectedIdentifier;
+                try self.recordErrorTrace(ParsingError.ExpectedIdentifier);
+                args[argCount] = .nil;
+                break :args;
+            } else argType: {
+                self.advance();
+                const colon: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+                if (colon.tokenType != .colon) {
+                    try self.recordErrorTrace(ParsingError.ExpectedType);
+                    break :argType;
+                }
+                self.advance();
+                const argType: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+                args[argCount] = switch (argType.tokenType) {
+                    .tyBool => .bool,
+                    .tyNum => .number,
+                    .tyString => .string,
+                    .tyVoid => e: {
+                        try self.recordErrorTrace(ParsingError.ArgumentCannotBeTypeVoid);
+                        break :e .nil;
+                    },
+                    else => e: {
+                        try self.recordErrorTrace(ParsingError.ExpectedType);
+                        break :e .nil;
+                    },
+                };
             }
             self.advance();
-            const colon = self.tryPeek() orelse return ParsingError.ExpectedType;
-            if (colon.tokenType != .colon) {
-                return ParsingError.ExpectedType;
+            const comma: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+            if (comma.tokenType != .comma) {
+                try self.recordErrorTrace(ParsingError.ExpectedToken);
             }
-            self.advance();
-            const argType = self.tryPeek() orelse return ParsingError.ExpectedType;
-            args[argCount] = switch (argType.tokenType) {
-                .tyBool => .bool,
-                .tyNum => .number,
-                .tyString => .string,
-                .tyVoid => return ParsingError.ArgumentCannotBeTypeVoid,
-                else => return ParsingError.ExpectedType,
-            };
             self.advance();
             if (argCount == 127) {
-                return ParsingError.ArgLimit128;
+                // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
+                try self.recordErrorTrace(ParsingError.ArgLimit128);
+                break :args;
             } else {
                 argCount += 1;
             }
         }
 
-        const close = self.tryPeek() orelse return ParsingError.ExpectedClosingParen;
+        const close: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (close.tokenType != .rightParen) {
-            return ParsingError.ExpectedClosingParen;
+            try self.recordErrorTrace(ParsingError.ExpectedClosingParen);
         }
         self.advance();
-        const rt = self.tryPeek() orelse return ParsingError.ExpectedType;
+        const rt: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         const retType: bytecode.Type = ret: switch (rt.tokenType) {
             .tyBool => {
                 self.advance();
@@ -192,7 +245,11 @@ pub const AstParser = struct {
                 break :ret .nil;
             },
             .leftBrace => break :ret .nil,
-            else => return ParsingError.ExpectedType,
+            else => {
+                self.advance();
+                try self.recordErrorTrace(ParsingError.ExpectedType);
+                break :ret .nil;
+            },
         };
         const funName = funNameT.source orelse unreachable;
         try codegen.enterFunction(funName, args[0..argCount], retType);
@@ -202,16 +259,16 @@ pub const AstParser = struct {
     }
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!void {
-        const opening: scanning.Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        const opening: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (opening.tokenType != .leftBrace) {
-            return ParsingError.ExpectedOpeningBrace;
+            try self.recordErrorTrace(ParsingError.ExpectedOpeningBrace);
         }
         self.advance();
         codegen.enterScope();
         try self.blockBodyRule(codegen, allocator);
-        const closing: scanning.Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        const closing: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (closing.tokenType != .rightBrace) {
-            return ParsingError.ExpectedClosingBrace;
+            try self.recordErrorTrace(ParsingError.ExpectedClosingBrace);
         }
         try codegen.exitScope();
         self.advance();
@@ -229,42 +286,49 @@ pub const AstParser = struct {
 
     fn statementRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
         _ = try self.declarationRule(codegen, allocator);
-        const end = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+        const end: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
-            return ParsingError.ExpectedSemicolon;
+            try self.recordErrorTrace(ParsingError.ExpectedSemicolon);
+        } else {
+            self.advance();
         }
-        self.advance();
     }
 
     fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
-        const decl = self.tryPeek() orelse return self.expressionRule(codegen, allocator);
+        const decl: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (decl.tokenType != .kwVar) {
             return self.expressionRule(codegen, allocator);
         }
         self.advance();
-        const name = self.tryPeek() orelse return ParsingError.ExpectedIdentifier;
+        const name: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (name.tokenType != .identifier) {
-            return ParsingError.ExpectedIdentifier;
+            try self.recordErrorTrace(ParsingError.ExpectedIdentifier);
         }
 
         self.advance();
-        switch ((self.tryPeek() orelse return ParsingError.ExpectedSemicolon).tokenType) {
+        switch ((self.tryPeek() orelse Token{ .source = null, .tokenType = .invalidChar }).tokenType) {
             .colon => {
                 self.advance();
 
-                const typeToken = self.tryPeek() orelse return ParsingError.ExpectedType;
+                const typeToken: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
                 const varType: bytecode.Type = switch (typeToken.tokenType) {
                     .tyBool => .bool,
                     .tyNum => .number,
                     .tyString => .string,
                     .tyVoid => .nil,
-                    .identifier => return ParsingError.CustomTypesNotYetSupported,
-                    else => return ParsingError.ExpectedType,
+                    .identifier => e: {
+                        try self.recordErrorTrace(ParsingError.CustomTypesNotYetSupported);
+                        break :e .nil;
+                    },
+                    else => e: {
+                        try self.recordErrorTrace(ParsingError.ExpectedType);
+                        break :e .nil;
+                    },
                 };
 
                 self.advance();
 
-                const next = self.tryPeek() orelse return ParsingError.ExpectedSemicolon;
+                const next: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
                 const initialValue: ?Handle = val: {
                     switch (next.tokenType) {
                         .semicolon => break :val null,
@@ -272,17 +336,26 @@ pub const AstParser = struct {
                             self.advance();
                             break :val try self.expressionRule(codegen, allocator);
                         },
-                        else => return ParsingError.ExpectedToken,
+                        else => {
+                            try self.recordErrorTrace(ParsingError.ExpectedToken);
+                            break :val null;
+                        },
                     }
                 };
                 return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
             },
-            .semicolon => return ParsingError.VariableDeclarationMustBeTyped,
+            .semicolon => {
+                try self.recordErrorTrace(ParsingError.VariableDeclarationMustBeTyped);
+                return .NIL;
+            },
             .equal => {
                 self.advance();
                 return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, allocator) });
             },
-            else => return ParsingError.ExpectedToken,
+            else => {
+                try self.recordErrorTrace(ParsingError.ExpectedToken);
+                return .NIL;
+            },
         }
     }
 
@@ -329,7 +402,7 @@ pub const AstParser = struct {
         return self.binaryRule(allocator, codegen, matches, unaryRule);
     }
     fn unaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
-        const opToken = self.tryPeek() orelse return error.ExpectedToken;
+        const opToken: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
 
         const operation: UnaryExprType = switch (opToken.tokenType) {
             .bang => .negateBool,
@@ -346,7 +419,7 @@ pub const AstParser = struct {
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
     fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!Handle {
-        const name = self.tryPeek() orelse return self.primaryRule(codegen, allocator);
+        const name: Token = self.tryPeek() orelse return self.primaryRule(codegen, allocator);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.primaryRule(codegen, allocator);
         }
@@ -369,18 +442,18 @@ pub const AstParser = struct {
                     args[argNums] = try self.expressionRule(codegen, allocator);
                     argNums += 1;
 
-                    const seperator = self.tryPeek() orelse scanning.Token{ .tokenType = .invalidChar, .source = null };
+                    const seperator: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
                     if (seperator.tokenType != .comma) {
                         break;
                     }
                     if (argNums < 128) {
                         self.advance();
                     } else {
-                        return ParsingError.ArgLimit128;
+                        try self.recordErrorTrace(ParsingError.ArgLimit128);
                     }
                 }
 
-                const endParen = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+                const endParen: Token = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
                 if (endParen.tokenType != .rightParen) {
                     return ParsingError.ExpectedClosingBrace;
                 }
@@ -400,24 +473,22 @@ pub const AstParser = struct {
     }
 
     fn primaryRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!Handle {
-        const token = self.tryPeek() orelse return error.ExpectedToken;
+        const token: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         self.advance();
 
-        if (token.tokenType == .leftParen) {
-            const expr = try self.expressionRule(codegen, allocator);
-
-            // the token will be the token following expr
-            const current = self.tryPeek() orelse return error.ExpectedToken;
-            if (current.tokenType != .rightParen) {
-                return error.UnexpectedToken;
-            } else {
-                self.advance();
-                return expr;
-            }
-        }
-
         return switch (token.tokenType) {
-            .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, token.source orelse "0") catch 0),
+            .leftParen => grouping: {
+                const expr = try self.expressionRule(codegen, allocator);
+
+                // the token will be the token following expr
+                const current: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+                if (current.tokenType != .rightParen) {
+                    try self.recordErrorTrace(ParsingError.ExpectedClosingParen);
+                }
+                self.advance();
+                break :grouping expr;
+            },
+            .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, token.source orelse unreachable) catch 0),
             .string => try codegen.newStringLit(token.source orelse unreachable),
             .kwNil => CodeGen.newNilLit(),
             .kwTrue => comptime CodeGen.newBoolLit(true),

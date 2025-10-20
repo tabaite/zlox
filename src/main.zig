@@ -89,12 +89,16 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter);
+            var astParser = parsing.AstParser.new(&iter, astAlloc);
 
-            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, iter, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
-                return;
-            };
+            try astParser.parseAndCompileAll(&codegen, astAlloc);
+
+            const errs = astParser.recoverErrorList();
+            if (errs.len > 0) {
+                for (errs) |trace| {
+                    try handleParseError(trace, stderrAny);
+                }
+            }
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -106,14 +110,18 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter);
+            var astParser = parsing.AstParser.new(&iter, astAlloc);
 
             _ = try stderr.write("\nbytecode:\n");
 
-            astParser.parseAndCompileAll(&codegen, astAlloc) catch |e| {
-                try handleParseError(e, stderrAny, iter, astParser.lastToken orelse .{ .tokenType = .invalidChar, .source = null });
-                return;
-            };
+            try astParser.parseAndCompileAll(&codegen, astAlloc);
+
+            const errs = astParser.recoverErrorList();
+            if (errs.len > 0) {
+                for (errs) |trace| {
+                    try handleParseError(trace, stderrAny);
+                }
+            }
 
             for (codegen.bytecodeList.items) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
@@ -141,10 +149,10 @@ pub fn main() !void {
     }
 }
 
-fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: scanning.TokenIterator, offendingToken: scanning.Token) !void {
+fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
     const Parser = parsing.ParsingError;
     const CodeGen = bytecode.CompilationError;
-    switch (err) {
+    switch (trace.err) {
         Parser.ExpectedSemicolon => _ = try out.write("expected semicolon\n"),
         Parser.ExpectedOpeningBrace => _ = try out.write("expected opening brace\n"),
         Parser.ExpectedClosingBrace => _ = try out.write("expected closing brace\n"),
@@ -159,39 +167,8 @@ fn handleParseError(err: anyerror, out: std.io.AnyWriter, source: scanning.Token
         CodeGen.VariableNotDeclared => _ = try out.write("this variable doesn't exist in this scope!\n"),
         CodeGen.MainFunctionCannotHaveArgs => _ = try out.write("main function cannot have arguments\n"),
         CodeGen.MainFunctionCannotReturnValue => _ = try out.write("main function cannot return anything\n"),
-        else => return err,
+        else => return trace.err,
     }
-    _ = try out.write("token:\n");
-    try scanning.printToken(offendingToken, out);
-    _ = try out.write("\n");
 
-    const position = source.position;
-    const line = source.lineNumber;
-    const length = source.source.len;
-
-    var lineStart: usize = 0;
-    var lineEnd: usize = length;
-    for (0..position) |t| {
-        const pos = position - t;
-        if (source.source[pos] == '\n') {
-            lineStart = pos + 1;
-            break;
-        }
-    }
-    for (position..length) |pos| {
-        if (source.source[pos] == '\n') {
-            lineEnd = pos - 1;
-            break;
-        }
-    }
-    for (lineStart..lineEnd) |a| {
-        switch (source.source[a]) {
-            ' ', '\t', '\r' => {},
-            else => {
-                lineStart = a;
-                break;
-            },
-        }
-    }
-    try out.print("line {d}: \x1b[31;1m{s}\x1b[0m\n", .{ line, source.source[lineStart..lineEnd] });
+    try out.print("line {d}: \x1b[31;1m{s}\x1b[0m\n\n", .{ trace.lineNum, trace.line });
 }

@@ -94,7 +94,7 @@ pub const Token = struct {
 pub const TokenIterator = struct {
     source: []u8,
     position: usize = 0,
-    lineNumber: usize = 1,
+    lineNumber: u32 = 1,
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
