@@ -7,8 +7,6 @@ fun bar(baz: number) number {
 }
 
 fun main() {
-
+    foo();
+    bar(27);
 }
-
-foo();
-bar(27);
