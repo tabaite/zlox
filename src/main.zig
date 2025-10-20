@@ -161,6 +161,8 @@ fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
         Parser.ArgLimit128 => _ = try out.write("you can't have more arguments sorry\nhave you tried like a di framework or something\n"),
         Parser.ArgumentCannotBeTypeVoid => _ = try out.write("argument cannot have type \"void\"\n"),
         Parser.ExpectedToken => _ = try out.write("expected a token\n"),
+        Parser.ExpectedKwFun => _ = try out.write("expected the keyword \"fun\"\n"),
+        Parser.ExpectedComma => _ = try out.write("expected a comma\n"),
         Parser.ExpectedIdentifier => _ = try out.write("expected a name\n"),
         Parser.UnexpectedToken => _ = try out.write("unexpected token!\n"),
 

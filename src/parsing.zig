@@ -36,6 +36,8 @@ const ParseErrorSet = Allocator.Error || ErrorSet;
 pub const ParsingError = error{
     UnexpectedToken,
     ExpectedToken,
+    ExpectedKwFun,
+    ExpectedComma,
     ExpectedSemicolon,
     ArgLimit128,
     ExpectedOpeningParen,
@@ -155,7 +157,7 @@ pub const AstParser = struct {
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
         const fun: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (fun.tokenType != .kwFun) {
-            try self.recordErrorTrace(ParsingError.ExpectedToken);
+            try self.recordErrorTrace(ParsingError.ExpectedKwFun);
         }
         self.advance();
         const funNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
@@ -172,10 +174,8 @@ pub const AstParser = struct {
         var args: [128]bytecode.Type = undefined;
         var argCount: usize = 0;
 
-        args: while (self.tryPeek()) |t| {
-            if (t.tokenType == .rightParen) {
-                break :args;
-            }
+        const argStart = self.tryPeek() orelse Token{ .source = null, .tokenType = .invalidChar };
+        if (argStart.tokenType != .rightParen) args: while (self.tryPeek()) |_| {
             const argNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
             if (argNameT.tokenType != .identifier) {
                 try self.recordErrorTrace(ParsingError.ExpectedIdentifier);
@@ -205,19 +205,31 @@ pub const AstParser = struct {
                 };
             }
             self.advance();
-            const comma: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
-            if (comma.tokenType != .comma) {
-                try self.recordErrorTrace(ParsingError.ExpectedToken);
+            const continuation: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+            switch (continuation.tokenType) {
+                .rightParen => {
+                    if (argCount == 127) {
+                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
+                        try self.recordErrorTrace(ParsingError.ArgLimit128);
+                        break :args;
+                    } else {
+                        argCount += 1;
+                    }
+                    break :args;
+                },
+                .comma => {
+                    self.advance();
+                    if (argCount == 127) {
+                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
+                        try self.recordErrorTrace(ParsingError.ArgLimit128);
+                        break :args;
+                    } else {
+                        argCount += 1;
+                    }
+                },
+                else => try self.recordErrorTrace(ParsingError.ExpectedComma),
             }
-            self.advance();
-            if (argCount == 127) {
-                // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                try self.recordErrorTrace(ParsingError.ArgLimit128);
-                break :args;
-            } else {
-                argCount += 1;
-            }
-        }
+        };
 
         const close: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (close.tokenType != .rightParen) {
