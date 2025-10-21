@@ -5,6 +5,7 @@ const common = @import("common.zig");
 const Allocator = std.mem.Allocator;
 
 pub const CompilationError = error{
+    FunctionsCannotBeNested,
     IncompatibleType,
     CannotMoveIntoLiteral,
     VariableNotDeclared,
@@ -76,7 +77,7 @@ pub const Operation = struct {
 };
 
 pub const Handle = u32;
-pub const Type = enum(u64) {
+pub const Type = enum(u32) {
     nil,
     number,
     numberLit,
@@ -130,6 +131,13 @@ const ScopeExtent = struct {
 const ScopeExtentStack = common.Stack(ScopeExtent, 32767);
 const ScopeNamesStack = common.Stack([]u8, 32767);
 
+const CurrentFunctionInfo = struct {
+    name: []u8,
+    argsUsed: usize,
+    args: [128]Type,
+    retType: Type,
+};
+
 pub const BytecodeGenerator = struct {
     allocator: Allocator,
     // We use 2 stacks to track the state of our variables.
@@ -145,8 +153,9 @@ pub const BytecodeGenerator = struct {
     stringBuffer: std.ArrayListUnmanaged(u8),
     // Tracks how high the stack is currently in RawOperands.
     stackHeight: u32,
-    // Because the first "instruction"
+    // Because the first "instruction" is the entry point, 0 is used here to represent none.
     entryPoint: enum(u32) { none = 0, _ },
+    currentFunction: ?CurrentFunctionInfo,
 
     pub fn finalize(self: *BytecodeGenerator) !Program {
         if (self.entryPoint == .none) {
@@ -157,6 +166,7 @@ pub const BytecodeGenerator = struct {
 
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
+            .currentFunction = null,
             .allocator = allocator,
             .scopeExtentStack = try .init(allocator),
             .scopeNamesStack = try .init(allocator),
@@ -177,6 +187,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn enterFunction(self: *BytecodeGenerator, name: []u8, argumentTypes: []Type, retType: Type) !void {
+        if (self.currentFunction != null) {
+            return CompilationError.FunctionsCannotBeNested;
+        }
         if (std.mem.eql(u8, name, "main")) {
             if (argumentTypes.len != 0) {
                 return CompilationError.MainFunctionCannotHaveArgs;
@@ -206,9 +219,14 @@ pub const BytecodeGenerator = struct {
             .string => "string",
         };
         std.debug.print(") RETURNS {s}\n", .{ty});
+        var func: CurrentFunctionInfo = .{ .argsUsed = argumentTypes.len, .args = undefined, .name = name, .retType = retType };
+        std.mem.copyForwards(Type, &func.args, argumentTypes);
+        self.currentFunction = func;
     }
 
-    pub fn exitFunction(_: *BytecodeGenerator) void {}
+    pub fn exitFunction(self: *BytecodeGenerator) void {
+        self.currentFunction = null;
+    }
 
     pub fn enterScope(self: *BytecodeGenerator) void {
         self.scopeExtentStack.push(.{});
