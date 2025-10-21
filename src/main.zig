@@ -50,7 +50,12 @@ pub fn main() !void {
 
     const contents = reading: {
         const cwd = std.fs.cwd();
-        const file = try cwd.openFile(path, .{});
+        const file = cwd.openFile(path, .{}) catch {
+            const cwdDir = try cwd.realpathAlloc(gpa, ".");
+            defer gpa.free(cwdDir);
+            try stderr.print("File {s} did not exist\nCWD is listed as {s}\n", .{ path, cwdDir });
+            return;
+        };
         defer file.close();
 
         const reader = file.reader();
@@ -134,14 +139,14 @@ pub fn main() !void {
 
             _ = try stderr.write("\nevaluating\n");
             var rt = try runtime.Runtime.init(astAlloc, gpa);
-            defer rt.deinit();
+            defer rt.deinit(astAlloc);
             rt.run(program);
 
             _ = try stderr.write("\nreally hacky stack vis:\n");
             _ = try stderr.write("( NULL )\n");
             for (1..rt.variableStack.used) |i| {
                 try bytecode.printInstruction(.{
-                    .a = rt.variableStack.items[i],
+                    .a = rt.variableStack.backing[i],
                     .b = .NULL_HANDLE,
                     .dest = @truncate(i),
                     .op = .{ .argType = .bothLiteral, .op = .pushItem },
