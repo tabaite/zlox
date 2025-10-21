@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(lldb) Launch",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/zlox",
+            "args": [
+                "evaluate",
+                "./example/scopes/functions.lox"
+            ],
+            "stopAtEntry": false,
+            "environment": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "zig build",
+        }
+    ]
+}
