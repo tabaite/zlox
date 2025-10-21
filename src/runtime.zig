@@ -33,21 +33,24 @@ pub const CallStack = common.Stack(usize, 10000);
 pub const VarStack = common.Stack(Operand, 16777215);
 
 pub const Runtime = struct {
+    stringAllocator: Allocator,
     variableStack: VarStack,
     callStack: CallStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
-            .variableStack = try VarStack.init(allocator, stringAllocator),
+            .stringAllocator = stringAllocator,
+            .variableStack = try VarStack.init(allocator),
             .callStack = try CallStack.init(allocator),
         };
     }
-    pub fn deinit(self: *Runtime) void {
-        self.variableStack.deinit();
-        self.callStack.deinit();
+    pub fn deinit(self: *Runtime, allocator: Allocator) void {
+        self.variableStack.deinit(allocator);
+        self.callStack.deinit(allocator);
     }
 
     pub fn run(self: *Runtime, program: bytecode.Program) void {
-        _ = self.callStack.push();
+        _ = self.variableStack.push(Operand{ .item = 0 });
+        _ = self.callStack.push(0);
         const code = program.instructions;
         var pointer = program.entryPoint;
         // If the main function doesn't return, we'll move all the way to the end and gracefully exit
@@ -58,19 +61,19 @@ pub const Runtime = struct {
                 .pushItem => {
                     const val = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a,
-                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)),
+                        .handleALiteralB, .bothHandle => self.variableStack.backing[@truncate(ins.a.item)],
                     };
                     _ = self.variableStack.push(val);
                 },
-                .pop => self.variableStack.pop(),
+                .pop => _ = self.variableStack.pop(),
                 else => {
                     const a: u64 = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a.item,
-                        .handleALiteralB, .bothHandle => self.variableStack.get(@truncate(ins.a.item)).item,
+                        .handleALiteralB, .bothHandle => self.variableStack.backing[@truncate(ins.a.item)].item,
                     };
                     const b: u64 = switch (ins.op.argType) {
                         .handleALiteralB, .bothLiteral => ins.b.item,
-                        .literalAHandleB, .bothHandle => self.variableStack.get(@truncate(ins.b.item)).item,
+                        .literalAHandleB, .bothHandle => self.variableStack.backing[@truncate(ins.b.item)].item,
                     };
                     const result: u64 = switch (ins.op.op) {
                         .move => a,
@@ -92,7 +95,7 @@ pub const Runtime = struct {
                         .bOr => @as(u64, @intCast(@intFromBool((a != 0) or (b != 0)))),
                         else => 0,
                     };
-                    self.variableStack.set(ins.dest, .{ .item = result });
+                    self.variableStack.backing[ins.dest] = Operand{ .item = result };
                 },
             }
             pointer += 1;

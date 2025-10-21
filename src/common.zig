@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-fn Stack(T: type, BackingSize: comptime_int) type {
+pub fn Stack(T: type, BackingSize: comptime_int) type {
     return struct {
         const Self = @This();
         backing: []T,
