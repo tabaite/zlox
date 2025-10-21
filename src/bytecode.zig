@@ -7,6 +7,7 @@ pub const CompilationError = error{
     IncompatibleType,
     CannotMoveIntoLiteral,
     VariableNotDeclared,
+    MainFunctionNotDeclared,
     MainFunctionCannotHaveArgs,
     MainFunctionCannotReturnValue,
 };
@@ -115,6 +116,11 @@ pub const Instruction = struct {
     op: Operation,
 };
 
+pub const Program = struct {
+    instructions: []Instruction,
+    entryPoint: usize,
+};
+
 fn Stack(T: type) type {
     return struct {
         const Self = @This();
@@ -170,6 +176,15 @@ pub const BytecodeGenerator = struct {
     stringBuffer: std.ArrayListUnmanaged(u8),
     // Tracks how high the stack is currently in RawOperands.
     stackHeight: u32,
+    // Because the first "instruction"
+    entryPoint: enum(u32) { none = 0, _ },
+
+    pub fn finalize(self: *BytecodeGenerator) !Program {
+        if (self.entryPoint == .none) {
+            return CompilationError.MainFunctionNotDeclared;
+        }
+        return .{ .entryPoint = @as(usize, @intFromEnum(self.entryPoint)) - 1, .instructions = self.bytecodeList.items };
+    }
 
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
@@ -181,6 +196,7 @@ pub const BytecodeGenerator = struct {
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
             // The first element on the stack is the null handle.
             .stackHeight = 1,
+            .entryPoint = .none,
         };
     }
     pub fn deinit(self: *BytecodeGenerator) void {
@@ -191,7 +207,7 @@ pub const BytecodeGenerator = struct {
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn enterFunction(_: *BytecodeGenerator, name: []u8, argumentTypes: []Type, retType: Type) !void {
+    pub fn enterFunction(self: *BytecodeGenerator, name: []u8, argumentTypes: []Type, retType: Type) !void {
         if (std.mem.eql(u8, name, "main")) {
             if (argumentTypes.len != 0) {
                 return CompilationError.MainFunctionCannotHaveArgs;
@@ -200,6 +216,7 @@ pub const BytecodeGenerator = struct {
                 return CompilationError.MainFunctionCannotReturnValue;
             }
             std.debug.print("ENTRY POINT main\n", .{});
+            self.entryPoint = @enumFromInt(self.bytecodeList.items.len + 1);
             return;
         }
         std.debug.print("function \"{s}\" ( ", .{name});

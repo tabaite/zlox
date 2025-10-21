@@ -125,14 +125,17 @@ pub fn main() !void {
                 return;
             }
 
-            for (codegen.bytecodeList.items) |ins| {
+            const program = try codegen.finalize();
+
+            try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
+            for (program.instructions) |ins| {
                 try bytecode.printInstruction(ins, stderrAny);
             }
 
             _ = try stderr.write("\nevaluating\n");
             var rt = try runtime.Runtime.init(astAlloc, gpa);
             defer rt.deinit();
-            rt.run(codegen.bytecodeList.items);
+            rt.run(program);
 
             _ = try stderr.write("\nreally hacky stack vis:\n");
             _ = try stderr.write("( NULL )\n");

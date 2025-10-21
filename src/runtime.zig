@@ -27,6 +27,54 @@ test "push varstack" {
     stack.deinit();
 }
 
+pub const CallStack = struct {
+    const VarHeight = usize;
+    const STACKSIZE: usize = 10000;
+
+    items: []VarHeight,
+    allocator: Allocator,
+    used: u32,
+
+    pub fn init(allocator: Allocator) !CallStack {
+        const items = try allocator.alloc(usize, STACKSIZE);
+        return .{
+            .items = items,
+            .used = 0,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *CallStack) void {
+        for (0..self.used - 1) |_| {
+            _ = self.pop();
+        }
+        self.allocator.free(self.items);
+    }
+
+    fn push(self: *CallStack) Handle {
+        const handle = self.used;
+        self.items[handle] = 0;
+        self.used += 1;
+
+        return handle;
+    }
+
+    pub fn addVarToTop(self: *CallStack) void {
+        self.items[self.used] += 1;
+    }
+    pub fn removeVarFromTop(self: *CallStack) void {
+        self.items[self.used] -= 1;
+    }
+
+    // Returns the remaining height of the stack.
+    pub fn pop(self: *CallStack) u32 {
+        if (self.used > 0) {
+            self.used -= 1;
+        }
+        return self.used;
+    }
+};
+
 pub const VarStack = struct {
     const NILHANDLE: Handle = 0;
     const STACKSIZE: usize = 16777215;
@@ -80,17 +128,26 @@ pub const VarStack = struct {
 
 pub const Runtime = struct {
     variableStack: VarStack,
+    callStack: CallStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
             .variableStack = try VarStack.init(allocator, stringAllocator),
+            .callStack = try CallStack.init(allocator),
         };
     }
     pub fn deinit(self: *Runtime) void {
         self.variableStack.deinit();
+        self.callStack.deinit();
     }
 
-    pub fn run(self: *Runtime, code: []bytecode.Instruction) void {
-        for (code) |ins| {
+    pub fn run(self: *Runtime, program: bytecode.Program) void {
+        _ = self.callStack.push();
+        const code = program.instructions;
+        var pointer = program.entryPoint;
+        // If the main function doesn't return, we'll move all the way to the end and gracefully exit
+        // tbh, we shouldn't allow this, but this is just to make sure we don't overflow
+        while (self.callStack.used > 0 and pointer < code.len) {
+            const ins = code[pointer];
             switch (ins.op.op) {
                 .pushItem => {
                     const val = switch (ins.op.argType) {
@@ -132,6 +189,7 @@ pub const Runtime = struct {
                     self.variableStack.set(ins.dest, .{ .item = result });
                 },
             }
+            pointer += 1;
         }
     }
 };
