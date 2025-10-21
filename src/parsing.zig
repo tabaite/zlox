@@ -6,7 +6,8 @@ const bytecode = @import("bytecode.zig");
 // function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")* (IDENTIFIER ":" type) )? ")" ( type )? block
 // arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
 // block          → "{" ( statement )* "}"
-// statement      → ( decl | expression ) ";"
+// statement      → ( return | decl | expression ) ";"
+// return         → "return" expression
 // declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
 // assignment     → IDENTIFIER "=" expression
 // expression     → or
@@ -301,7 +302,7 @@ pub const AstParser = struct {
     }
 
     fn statementRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
-        _ = try self.declarationRule(codegen, allocator);
+        try self.returnRule(codegen, allocator);
         const end: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             try self.recordErrorTrace(ParsingError.ExpectedSemicolon);
@@ -310,10 +311,20 @@ pub const AstParser = struct {
         }
     }
 
-    fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !Handle {
+    fn returnRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
+        const ret: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        if (ret.tokenType != .kwReturn) {
+            return self.declarationRule(codegen, allocator);
+        }
+        self.advance();
+        codegen.returnFunction(try self.expressionRule(codegen, allocator));
+    }
+
+    fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
         const decl: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (decl.tokenType != .kwVar) {
-            return self.expressionRule(codegen, allocator);
+            _ = try self.expressionRule(codegen, allocator);
+            return;
         }
         self.advance();
         const name: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
@@ -358,19 +369,21 @@ pub const AstParser = struct {
                         },
                     }
                 };
-                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
+                _ = try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
+                return;
             },
             .semicolon => {
                 try self.recordErrorTrace(ParsingError.VariableDeclarationMustBeTyped);
-                return .NIL;
+                return;
             },
             .equal => {
                 self.advance();
-                return try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, allocator) });
+                _ = try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, allocator) });
+                return;
             },
             else => {
                 try self.recordErrorTrace(ParsingError.ExpectedToken);
-                return .NIL;
+                return;
             },
         }
     }

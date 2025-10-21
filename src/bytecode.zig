@@ -276,6 +276,16 @@ pub const BytecodeGenerator = struct {
         return try self.moveOperand(new, handle.*);
     }
 
+    pub fn returnFunction(self: *BytecodeGenerator, _: HandledOperand) void {
+        const name = (self.currentFunction orelse CurrentFunctionInfo{
+            .name = @constCast("none??"),
+            .args = undefined,
+            .argsUsed = 0,
+            .retType = .nil,
+        }).name;
+        std.debug.print("returning from {s}!\n", .{name});
+    }
+
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
         switch (dest.type) {
             .boolLit, .numberLit => return CompilationError.CannotMoveIntoLiteral,
