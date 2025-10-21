@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
+const common = @import("common.zig");
 const Allocator = std.mem.Allocator;
 
 pub const RuntimeError = error{
@@ -27,104 +28,9 @@ test "push varstack" {
     stack.deinit();
 }
 
-pub const CallStack = struct {
-    const VarHeight = usize;
-    const STACKSIZE: usize = 10000;
+pub const CallStack = common.Stack(usize, 10000);
 
-    items: []VarHeight,
-    allocator: Allocator,
-    used: u32,
-
-    pub fn init(allocator: Allocator) !CallStack {
-        const items = try allocator.alloc(usize, STACKSIZE);
-        return .{
-            .items = items,
-            .used = 0,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *CallStack) void {
-        for (0..self.used - 1) |_| {
-            _ = self.pop();
-        }
-        self.allocator.free(self.items);
-    }
-
-    fn push(self: *CallStack) Handle {
-        const handle = self.used;
-        self.items[handle] = 0;
-        self.used += 1;
-
-        return handle;
-    }
-
-    pub fn addVarToTop(self: *CallStack) void {
-        self.items[self.used] += 1;
-    }
-    pub fn removeVarFromTop(self: *CallStack) void {
-        self.items[self.used] -= 1;
-    }
-
-    // Returns the remaining height of the stack.
-    pub fn pop(self: *CallStack) u32 {
-        if (self.used > 0) {
-            self.used -= 1;
-        }
-        return self.used;
-    }
-};
-
-pub const VarStack = struct {
-    const NILHANDLE: Handle = 0;
-    const STACKSIZE: usize = 16777215;
-
-    items: []Operand,
-    allocator: Allocator,
-    stringAllocator: Allocator,
-    used: u32,
-
-    pub fn init(allocator: Allocator, stringAllocator: Allocator) !VarStack {
-        const items = try allocator.alloc(Operand, STACKSIZE);
-        items[0] = .{ .item = 0 };
-        return .{
-            .items = items,
-            .used = 1,
-            .allocator = allocator,
-            .stringAllocator = stringAllocator,
-        };
-    }
-
-    pub fn deinit(self: *VarStack) void {
-        for (0..self.used - 1) |_| {
-            self.pop();
-        }
-        self.allocator.free(self.items);
-    }
-
-    fn push(self: *VarStack, v: Operand) Handle {
-        const handle = self.used;
-        self.items[handle] = v;
-        self.used += 1;
-
-        return handle;
-    }
-
-    pub fn set(self: *VarStack, handle: Handle, new: Operand) void {
-        self.items[handle] = new;
-    }
-
-    pub fn get(self: *VarStack, handle: Handle) Operand {
-        return self.items[handle];
-    }
-
-    pub fn pop(self: *VarStack) void {
-        // The first element is our nil handle.
-        if (self.used > 1) {
-            self.used -= 1;
-        }
-    }
-};
+pub const VarStack = common.Stack(Operand, 16777215);
 
 pub const Runtime = struct {
     variableStack: VarStack,

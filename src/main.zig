@@ -173,6 +173,7 @@ fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
         Parser.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
 
         CodeGen.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
+        CodeGen.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope\n",
         CodeGen.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
         CodeGen.MainFunctionCannotReturnValue => "main function cannot return anything\n",
         else => return trace.err,

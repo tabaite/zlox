@@ -1,12 +1,14 @@
 const std = @import("std");
 // circular imports are allowed!!!
 const parsing = @import("parsing.zig");
+const common = @import("common.zig");
 const Allocator = std.mem.Allocator;
 
 pub const CompilationError = error{
     IncompatibleType,
     CannotMoveIntoLiteral,
     VariableNotDeclared,
+    VariableAlreadyDeclared,
     MainFunctionNotDeclared,
     MainFunctionCannotHaveArgs,
     MainFunctionCannotReturnValue,
@@ -121,47 +123,14 @@ pub const Program = struct {
     entryPoint: usize,
 };
 
-fn Stack(T: type) type {
-    return struct {
-        const Self = @This();
-        backing: []T,
-        used: usize,
-        pub fn init(allocator: Allocator) !Self {
-            return .{ .used = 0, .backing = try allocator.alloc(T, 2048) };
-        }
-        pub fn push(self: *Self, item: T) void {
-            self.backing[self.used] = item;
-            self.used += 1;
-        }
-        pub fn top(self: *Self) ?*T {
-            if (self.used == 0) {
-                return null;
-            }
-            return &self.backing[self.used - 1];
-        }
-        pub fn height(self: Self) usize {
-            return self.used;
-        }
-        pub fn pop(self: *Self) ?T {
-            if (self.used == 0) {
-                return null;
-            }
-            const item = self.backing[self.used - 1];
-            self.used -= 1;
-            return item;
-        }
-        pub fn deinit(self: *Self, allocator: Allocator) void {
-            allocator.free(self.backing);
-        }
-    };
-}
+const ScopeExtent = struct {
+    numVars: usize = 0,
+    numItems: usize = 0,
+};
+const ScopeExtentStack = common.Stack(ScopeExtent, 32767);
+const ScopeNamesStack = common.Stack([]u8, 32767);
 
 pub const BytecodeGenerator = struct {
-    const ScopeExtent = struct {
-        numVars: usize = 0,
-        numItems: usize = 0,
-    };
-
     allocator: Allocator,
     // We use 2 stacks to track the state of our variables.
     // scopeExtentStack tracks the amount of variables that are pushed in a scope.
@@ -169,8 +138,8 @@ pub const BytecodeGenerator = struct {
     // When a scope is entered, we push a new number onto scopeExtentStack.
     // When a variable is declared, we add 1 to the number on the top of scopeExtentStack.
     // When the scope exits, pop scopeExtentStack, and deregister that amount of variables from the top of scopeNamesStack.
-    scopeExtentStack: Stack(ScopeExtent),
-    scopeNamesStack: Stack([]u8),
+    scopeExtentStack: ScopeExtentStack,
+    scopeNamesStack: ScopeNamesStack,
     variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
     stringBuffer: std.ArrayListUnmanaged(u8),
@@ -189,8 +158,8 @@ pub const BytecodeGenerator = struct {
     pub fn init(allocator: Allocator) !BytecodeGenerator {
         return BytecodeGenerator{
             .allocator = allocator,
-            .scopeExtentStack = try Stack(ScopeExtent).init(allocator),
-            .scopeNamesStack = try Stack([]u8).init(allocator),
+            .scopeExtentStack = try .init(allocator),
+            .scopeNamesStack = try .init(allocator),
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
@@ -259,14 +228,18 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
-        self.scopeNamesStack.push(name);
-        const handle = try self.pushOperand(name, typeInfo);
-        try self.variableRegistry.put(self.allocator, name, handle);
-        const scopeVarCount = self.scopeExtentStack.top();
-        if (scopeVarCount != null) {
-            (scopeVarCount orelse unreachable).numVars += 1;
+        const res = try self.variableRegistry.getOrPut(self.allocator, name);
+        if (!res.found_existing) {
+            self.scopeNamesStack.push(name);
+            const handle = try self.pushOperand(name, typeInfo);
+            const scopeVarCount = self.scopeExtentStack.top();
+            if (scopeVarCount != null) {
+                (scopeVarCount orelse unreachable).numVars += 1;
+            }
+            res.value_ptr.* = handle;
+            return handle;
         }
-        return handle;
+        return CompilationError.VariableAlreadyDeclared;
     }
 
     pub fn getVariable(self: *BytecodeGenerator, name: []u8) !HandledOperand {
