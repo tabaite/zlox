@@ -88,6 +88,20 @@ const TokenToBinaryExpr = struct {
     value: BinaryExprType,
 };
 
+const FunctionContext = struct {
+    retType: bytecode.Type,
+};
+
+const BlockReturnInfo = struct {
+    // Not used yet (apart from implicit returns)
+    // But will be useful for control flow in the future.
+    // We don't need to concern ourselves with the type. The return
+    // rule will submit the return type to the bytecode generator,
+    // and generate a CompilationError if it is wrong. I really need
+    // to stop shoving compilation errors into the parser.
+    returnsOnAllPaths: bool,
+};
+
 fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBinaryExpr) ?BinaryExprType {
     for (matches) |t| {
         if (t.key == target) {
@@ -127,11 +141,11 @@ pub const AstParser = struct {
     pub fn parseAndCompileAll(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
         while (self.tryPeek()) |t| {
             switch (t.tokenType) {
-                .leftBrace => try self.blockRule(codegen, allocator),
+                .leftBrace => _ = try self.blockRule(codegen, allocator),
                 .kwFun => try self.functionDeclarationRule(codegen, allocator),
                 else => {
                     try self.recordErrorTrace(ParsingError.GlobalScopeNoLongerUsable);
-                    try self.statementRule(codegen, allocator);
+                    _ = try self.statementRule(codegen, allocator);
                 },
             }
         }
@@ -275,49 +289,56 @@ pub const AstParser = struct {
         codegen.exitFunction();
     }
 
-    fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!void {
+    fn blockRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) ParseErrorSet!BlockReturnInfo {
         const opening: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (opening.tokenType != .leftBrace) {
             try self.recordErrorTrace(ParsingError.ExpectedOpeningBrace);
         }
         self.advance();
         codegen.enterScope();
-        try self.blockBodyRule(codegen, allocator);
+        const retInfo = try self.blockBodyRule(codegen, allocator);
         const closing: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (closing.tokenType != .rightBrace) {
             try self.recordErrorTrace(ParsingError.ExpectedClosingBrace);
         }
         try codegen.exitScope();
         self.advance();
+        return retInfo;
     }
 
-    fn blockBodyRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
+    fn blockBodyRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !BlockReturnInfo {
+        var blockRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = false };
         while (self.tryPeek()) |t| {
-            switch (t.tokenType) {
+            const subblockRetInfo: BlockReturnInfo = switch (t.tokenType) {
                 .leftBrace => try self.blockRule(codegen, allocator),
-                .rightBrace => return,
+                .rightBrace => return blockRetInfo,
                 else => try self.statementRule(codegen, allocator),
-            }
+            };
+            blockRetInfo.returnsOnAllPaths = blockRetInfo.returnsOnAllPaths or subblockRetInfo.returnsOnAllPaths;
         }
+        return blockRetInfo;
     }
 
-    fn statementRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
-        try self.returnRule(codegen, allocator);
+    fn statementRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !BlockReturnInfo {
+        const blockRetInfo = try self.returnRule(codegen, allocator);
         const end: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
             try self.recordErrorTrace(ParsingError.ExpectedSemicolon);
         } else {
             self.advance();
         }
+        return blockRetInfo;
     }
 
-    fn returnRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {
+    fn returnRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !BlockReturnInfo {
         const ret: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (ret.tokenType != .kwReturn) {
-            return self.declarationRule(codegen, allocator);
+            try self.declarationRule(codegen, allocator);
+            return .{ .returnsOnAllPaths = false };
         }
         self.advance();
-        codegen.returnFunction(try self.expressionRule(codegen, allocator));
+        codegen.insertFunctionReturn(try self.expressionRule(codegen, allocator));
+        return .{ .returnsOnAllPaths = true };
     }
 
     fn declarationRule(self: *AstParser, codegen: *CodeGen, allocator: Allocator) !void {

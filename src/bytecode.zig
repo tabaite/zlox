@@ -131,11 +131,12 @@ const ScopeExtent = struct {
 const ScopeExtentStack = common.Stack(ScopeExtent, 32767);
 const ScopeNamesStack = common.Stack([]u8, 32767);
 
-const CurrentFunctionInfo = struct {
+const CurrentFunctionContext = struct {
     name: []u8,
     argsUsed: usize,
     args: [128]Type,
     retType: Type,
+    returnsOnAllPaths: bool,
 };
 
 pub const BytecodeGenerator = struct {
@@ -155,7 +156,7 @@ pub const BytecodeGenerator = struct {
     stackHeight: u32,
     // Because the first "instruction" is the entry point, 0 is used here to represent none.
     entryPoint: enum(u32) { none = 0, _ },
-    currentFunction: ?CurrentFunctionInfo,
+    currentFunction: ?CurrentFunctionContext,
 
     pub fn finalize(self: *BytecodeGenerator) !Program {
         if (self.entryPoint == .none) {
@@ -219,12 +220,18 @@ pub const BytecodeGenerator = struct {
             .string => "string",
         };
         std.debug.print(") RETURNS {s}\n", .{ty});
-        var func: CurrentFunctionInfo = .{ .argsUsed = argumentTypes.len, .args = undefined, .name = name, .retType = retType };
+        var func: CurrentFunctionContext = .{ .argsUsed = argumentTypes.len, .args = undefined, .name = name, .retType = retType, .returnsOnAllPaths = false };
         std.mem.copyForwards(Type, &func.args, argumentTypes);
         self.currentFunction = func;
     }
 
     pub fn exitFunction(self: *BytecodeGenerator) void {
+        if (self.currentFunction != null) {
+            const f = self.currentFunction.?;
+            if (!f.returnsOnAllPaths and f.retType != .nil) {
+                std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
+            }
+        }
         self.currentFunction = null;
     }
 
@@ -276,13 +283,17 @@ pub const BytecodeGenerator = struct {
         return try self.moveOperand(new, handle.*);
     }
 
-    pub fn returnFunction(self: *BytecodeGenerator, _: HandledOperand) void {
-        const name = (self.currentFunction orelse CurrentFunctionInfo{
+    pub fn insertFunctionReturn(self: *BytecodeGenerator, _: HandledOperand) void {
+        const name = (self.currentFunction orelse CurrentFunctionContext{
             .name = @constCast("none??"),
             .args = undefined,
             .argsUsed = 0,
             .retType = .nil,
+            .returnsOnAllPaths = false,
         }).name;
+        if (self.currentFunction != null) {
+            self.currentFunction.?.returnsOnAllPaths = true;
+        }
         std.debug.print("returning from {s}!\n", .{name});
     }
 
