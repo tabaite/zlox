@@ -8,6 +8,7 @@ const scanning = lib.scanning;
 const parsing = lib.parsing;
 const runtime = lib.runtime;
 const bytecode = lib.bytecode;
+const ErrorLog = lib.common.ErrorLog;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -96,11 +97,12 @@ pub fn main() !void {
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter, astAlloc);
 
-            try astParser.parseAndCompileAll(&codegen, astAlloc);
+            var errLog = try ErrorLog.init(astAlloc);
+            try astParser.parseAndCompileAll(&codegen, &errLog);
 
-            const errs = astParser.recoverErrorList();
-            if (errs.len > 0) {
-                for (errs) |trace| {
+            const errs = errLog.recover();
+            if (errs != null) {
+                for (errs.?) |trace| {
                     try handleParseError(trace, stderrAny);
                 }
                 return;
@@ -120,11 +122,12 @@ pub fn main() !void {
 
             _ = try stderr.write("\nbytecode:\n");
 
-            try astParser.parseAndCompileAll(&codegen, astAlloc);
+            var errLog = try ErrorLog.init(astAlloc);
+            try astParser.parseAndCompileAll(&codegen, &errLog);
 
-            const errs = astParser.recoverErrorList();
-            if (errs.len > 0) {
-                for (errs) |trace| {
+            const errs = errLog.recover();
+            if (errs != null) {
+                for (errs.?) |trace| {
                     try handleParseError(trace, stderrAny);
                 }
                 return;
@@ -160,27 +163,26 @@ pub fn main() !void {
 }
 
 fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
-    const Parser = parsing.ParsingError;
-    const CodeGen = bytecode.CompilationError;
+    const Error = lib.common.CompileError;
     const message = switch (trace.err) {
-        Parser.ExpectedSemicolon => "expected semicolon\n",
-        Parser.ExpectedOpeningBrace => "expected opening brace\n",
-        Parser.ExpectedClosingBrace => "expected closing brace\n",
-        Parser.ExpectedOpeningParen => "expected opening parenthesis\n",
-        Parser.ExpectedClosingParen => "expected closing parenthesis\n",
-        Parser.ArgLimit128 => "you can't have more arguments sorry\nhave you tried like a di framework or something\n",
-        Parser.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"\n",
-        Parser.ExpectedToken => "expected a token\n",
-        Parser.ExpectedKwFun => "expected the keyword \"fun\"\n",
-        Parser.ExpectedComma => "expected a comma\n",
-        Parser.ExpectedIdentifier => "expected a name\n",
-        Parser.UnexpectedToken => "unexpected token!\n",
-        Parser.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
-
-        CodeGen.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
-        CodeGen.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope\n",
-        CodeGen.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
-        CodeGen.MainFunctionCannotReturnValue => "main function cannot return anything\n",
+        Error.ExpectedSemicolon => "expected semicolon\n",
+        Error.ExpectedOpeningBrace => "expected opening brace\n",
+        Error.ExpectedClosingBrace => "expected closing brace\n",
+        Error.ExpectedOpeningParen => "expected opening parenthesis\n",
+        Error.ExpectedClosingParen => "expected closing parenthesis\n",
+        Error.ArgLimit128 => "you can't have more arguments sorry\nhave you tried like a di framework or something\n",
+        Error.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"\n",
+        Error.ExpectedToken => "expected a token\n",
+        Error.ExpectedKwFun => "expected the keyword \"fun\"\n",
+        Error.ExpectedComma => "expected a comma\n",
+        Error.ExpectedIdentifier => "expected a name\n",
+        Error.UnexpectedToken => "unexpected token!\n",
+        Error.ExpectedTypeAtVariableDeclaration => "expected a type at this variable declaration (either inferred from initial value or explicitly provided)",
+        Error.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
+        Error.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
+        Error.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope\n",
+        Error.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
+        Error.MainFunctionCannotReturnValue => "main function cannot return anything\n",
         else => return trace.err,
     };
 
