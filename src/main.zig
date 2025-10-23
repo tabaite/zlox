@@ -173,6 +173,7 @@ fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
         Error.ArgLimit128 => "you can't have more arguments sorryhave you tried like a di framework or something\n",
         Error.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"",
         Error.ExpectedToken => "expected a token",
+        Error.ExpectedExpression => "expected a valid expression",
         Error.ExpectedKwFun => "expected the keyword \"fun\"",
         Error.ExpectedComma => "expected a comma",
         Error.ExpectedIdentifier => "expected a name",

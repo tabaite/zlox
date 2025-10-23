@@ -477,9 +477,13 @@ pub const AstParser = struct {
                     }
                 }
 
-                const endParen: Token = self.tryPeek() orelse return ParsingError.ExpectedClosingBrace;
+                const endParen: Token = self.tryPeek() orelse {
+                    log.push(ParsingError.ExpectedClosingBrace);
+                    return .ERR;
+                };
                 if (endParen.tokenType != .rightParen) {
-                    return ParsingError.ExpectedClosingBrace;
+                    log.push(ParsingError.ExpectedClosingBrace);
+                    return .ERR;
                 }
                 self.advance();
                 return Handle.NIL;
@@ -498,9 +502,8 @@ pub const AstParser = struct {
 
     fn primaryRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!Handle {
         const token: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
-        self.advance();
 
-        return switch (token.tokenType) {
+        const result = switch (token.tokenType) {
             .leftParen => grouping: {
                 const expr = try self.expressionRule(codegen, log);
 
@@ -518,9 +521,13 @@ pub const AstParser = struct {
             .kwTrue => comptime CodeGen.newBoolLit(true),
             .kwFalse => comptime CodeGen.newBoolLit(false),
             else => {
-                log.push(ParsingError.UnexpectedToken);
+                // Since this is the last rule checked, a rejection means there's no expression.
+                // If we're calling the expression rules, we definitely need one.
+                log.push(ParsingError.ExpectedExpression);
                 return .ERR;
             },
         };
+        self.advance();
+        return result;
     }
 };
