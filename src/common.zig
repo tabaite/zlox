@@ -3,6 +3,7 @@ const std = @import("std");
 // i love circular imports!
 const parsing = @import("parsing.zig");
 const bytecode = @import("bytecode.zig");
+const scanning = @import("scanning.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,17 +15,38 @@ pub const ErrorTrace = struct {
 };
 pub const ErrorLog = struct {
     const BACKINGSIZE = 32767;
+    // li'l bit spaghetti
+    context: *scanning.TokenIterator,
     backing: []ErrorTrace,
     used: usize,
 
-    pub fn init(allocator: Allocator) !ErrorLog {
+    pub fn init(allocator: Allocator, iter: *scanning.TokenIterator) !ErrorLog {
         return .{
+            .context = iter,
             .backing = try allocator.alloc(ErrorTrace, BACKINGSIZE),
             .used = 0,
         };
     }
 
-    pub fn push(self: *ErrorLog, trace: ErrorTrace) void {
+    pub fn push(self: *ErrorLog, err: CompileError) void {
+        var start: usize = 0;
+        var end = self.context.source.len;
+
+        const pos = self.context.position;
+        for (0..pos) |i| {
+            const idx = pos - i - 1;
+            if (self.context.source[idx] == '\n') {
+                start = idx;
+                break;
+            }
+        }
+        for (pos..self.context.source.len) |i| {
+            if (self.context.source[i] == '\n') {
+                end = i;
+                break;
+            }
+        }
+        const trace: ErrorTrace = .{ .err = err, .lineNum = self.context.lineNumber, .line = self.context.source[start..end] };
         self.backing[self.used] = trace;
         self.used += 1;
     }

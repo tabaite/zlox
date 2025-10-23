@@ -1,11 +1,11 @@
-var pi = 3.14159265;
-
-{
+fun main() {
+    var pi = 3.14159265;
     var height = 15;
     {
         var length = pi * 2;
     }
 
-    // error: length scope ended
-    var area = height * length;
+    var b = false + 2;
+
+    var area = height * "as";
 }

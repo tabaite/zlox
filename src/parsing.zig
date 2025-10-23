@@ -143,26 +143,8 @@ pub const AstParser = struct {
         }
     }
 
-    fn recordErrorTrace(self: *AstParser, log: *ErrorLog, err: ParsingError) void {
-        var start: usize = 0;
-        var end = self.iter.source.len;
-
-        const pos = self.iter.position;
-        for (0..pos) |i| {
-            const idx = pos - i - 1;
-            if (self.iter.source[idx] == '\n') {
-                start = idx;
-                break;
-            }
-        }
-        for (pos..self.iter.source.len) |i| {
-            if (self.iter.source[i] == '\n') {
-                end = i;
-                break;
-            }
-        }
-        const trace: ErrorTrace = .{ .err = err, .lineNum = self.iter.lineNumber, .line = self.iter.source[start..end] };
-        log.push(trace);
+    fn recordErrorTrace(_: *AstParser, log: *ErrorLog, err: ParsingError) void {
+        log.push(err);
     }
 
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
@@ -275,7 +257,7 @@ pub const AstParser = struct {
             },
         };
         const funName = funNameT.source orelse unreachable;
-        try codegen.enterFunction(funName, args[0..argCount], retType);
+        try codegen.enterFunction(log, funName, args[0..argCount], retType);
         // Function body
         _ = try self.blockRule(codegen, log);
         codegen.exitFunction();
@@ -382,7 +364,7 @@ pub const AstParser = struct {
                         },
                     }
                 };
-                _ = try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
+                _ = try codegen.registerVariable(log, name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
                 return;
             },
             .semicolon => {
@@ -391,7 +373,7 @@ pub const AstParser = struct {
             },
             .equal => {
                 self.advance();
-                _ = try codegen.registerVariable(name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, log) });
+                _ = try codegen.registerVariable(log, name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, log) });
                 return;
             },
             else => {
@@ -415,7 +397,7 @@ pub const AstParser = struct {
 
             const right = try previousRule(self, codegen, log);
 
-            expression = try codegen.pushBinaryOperation(operation, expression, right);
+            expression = try codegen.pushBinaryOperation(log, operation, expression, right);
         }
         return expression;
     }
@@ -456,7 +438,7 @@ pub const AstParser = struct {
 
         const right = try self.unaryRule(codegen, log);
 
-        return try codegen.pushUnaryOperation(operation, right);
+        return try codegen.pushUnaryOperation(log, operation, right);
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
@@ -506,10 +488,10 @@ pub const AstParser = struct {
                 self.advance();
 
                 const item = try self.expressionRule(codegen, log);
-                return codegen.updateVariable(name.source orelse @constCast("NULL NAME THIS IS A BUG PLEASE REPORT IT NOW!!"), item);
+                return try codegen.updateVariable(log, name.source orelse @constCast("NULL NAME THIS IS A BUG PLEASE REPORT IT NOW!!"), item);
             },
             else => {
-                return codegen.getVariable(name.source orelse @constCast("uhhhhhhhhh this is awkward"));
+                return codegen.getVariable(log, name.source orelse @constCast("uhhhhhhhhh this is awkward"));
             },
         }
     }
@@ -535,7 +517,10 @@ pub const AstParser = struct {
             .kwNil => CodeGen.newNilLit(),
             .kwTrue => comptime CodeGen.newBoolLit(true),
             .kwFalse => comptime CodeGen.newBoolLit(false),
-            else => return error.UnexpectedToken,
+            else => {
+                log.push(ParsingError.UnexpectedToken);
+                return .ERR;
+            },
         };
     }
 };

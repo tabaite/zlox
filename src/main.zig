@@ -97,7 +97,7 @@ pub fn main() !void {
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
             var astParser = parsing.AstParser.new(&iter, astAlloc);
 
-            var errLog = try ErrorLog.init(astAlloc);
+            var errLog = try ErrorLog.init(astAlloc, &iter);
             try astParser.parseAndCompileAll(&codegen, &errLog);
 
             const errs = errLog.recover();
@@ -122,7 +122,7 @@ pub fn main() !void {
 
             _ = try stderr.write("\nbytecode:\n");
 
-            var errLog = try ErrorLog.init(astAlloc);
+            var errLog = try ErrorLog.init(astAlloc, &iter);
             try astParser.parseAndCompileAll(&codegen, &errLog);
 
             const errs = errLog.recover();
@@ -165,24 +165,25 @@ pub fn main() !void {
 fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
     const Error = lib.common.CompileError;
     const message = switch (trace.err) {
-        Error.ExpectedSemicolon => "expected semicolon\n",
-        Error.ExpectedOpeningBrace => "expected opening brace\n",
-        Error.ExpectedClosingBrace => "expected closing brace\n",
-        Error.ExpectedOpeningParen => "expected opening parenthesis\n",
-        Error.ExpectedClosingParen => "expected closing parenthesis\n",
-        Error.ArgLimit128 => "you can't have more arguments sorry\nhave you tried like a di framework or something\n",
-        Error.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"\n",
-        Error.ExpectedToken => "expected a token\n",
-        Error.ExpectedKwFun => "expected the keyword \"fun\"\n",
-        Error.ExpectedComma => "expected a comma\n",
-        Error.ExpectedIdentifier => "expected a name\n",
-        Error.UnexpectedToken => "unexpected token!\n",
+        Error.ExpectedSemicolon => "expected semicolon",
+        Error.ExpectedOpeningBrace => "expected opening brace",
+        Error.ExpectedClosingBrace => "expected closing brace",
+        Error.ExpectedOpeningParen => "expected opening parenthesis",
+        Error.ExpectedClosingParen => "expected closing parenthesis",
+        Error.ArgLimit128 => "you can't have more arguments sorryhave you tried like a di framework or something\n",
+        Error.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"",
+        Error.ExpectedToken => "expected a token",
+        Error.ExpectedKwFun => "expected the keyword \"fun\"",
+        Error.ExpectedComma => "expected a comma",
+        Error.ExpectedIdentifier => "expected a name",
+        Error.UnexpectedToken => "unexpected token!",
         Error.ExpectedTypeAtVariableDeclaration => "expected a type at this variable declaration (either inferred from initial value or explicitly provided)",
         Error.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
-        Error.VariableNotDeclared => "this variable doesn't exist in this scope!\n",
-        Error.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope\n",
-        Error.MainFunctionCannotHaveArgs => "main function cannot have arguments\n",
-        Error.MainFunctionCannotReturnValue => "main function cannot return anything\n",
+        Error.VariableNotDeclared => "this variable doesn't exist in this scope!",
+        Error.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope",
+        Error.MainFunctionCannotHaveArgs => "main function cannot have arguments",
+        Error.MainFunctionCannotReturnValue => "main function cannot return anything",
+        Error.IncompatibleType => "operation types are not compatible",
         else => return trace.err,
     };
 
