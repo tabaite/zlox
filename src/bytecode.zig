@@ -9,11 +9,18 @@ pub const CompilationError = error{
     IncompatibleType,
     CannotMoveIntoLiteral,
     VariableNotDeclared,
+    FunctionNotDeclared,
     VariableAlreadyDeclared,
     MainFunctionNotDeclared,
     MainFunctionCannotHaveArgs,
     MainFunctionCannotReturnValue,
 };
+
+// function calls:
+// use new pushArg instruction to push instructions into a buffer
+// when calling, we put the number of pushed args onto the callstack
+// and push that set of values
+// when returning, we pop the number of popped args
 
 // How literals work:
 // Each operation has a component that displays the type of the arguments (literal OR handle).
@@ -67,6 +74,11 @@ pub const OpCode = enum(u30) {
     bOr,
     bAnd,
 
+    // A: Location of function to call, B: Number of items on the stack to swipe from the top, Dest: Location of return item, Arg Type: Unused
+    call,
+    // A, B, Arg Type, Dest: Unused
+    ret,
+
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
     move,
 };
@@ -103,6 +115,11 @@ pub const NewVariableTypeInfo = union(enum) {
     },
 };
 
+pub const ArgInfo = struct {
+    name: []u8,
+    type: Type,
+};
+
 // Operand, but with a type. Not used in bytecode, but rather for variable tracking and pushing operations.
 pub const HandledOperand = struct {
     operand: RawOperand,
@@ -115,6 +132,7 @@ pub const HandledOperand = struct {
 pub const RawOperand = packed struct {
     item: u64,
     pub const NULL_HANDLE: RawOperand = .{ .item = 0 };
+    pub const RET_HANDLE: RawOperand = .{ .item = 1 };
 };
 
 // The operand will be treated differently depending on the operation.
@@ -139,8 +157,7 @@ const ScopeNamesStack = common.Stack([]u8, 32767);
 
 const CurrentFunctionContext = struct {
     name: []u8,
-    argsUsed: usize,
-    args: [128]Type,
+    args: []ArgInfo,
     retType: Type,
     returnsOnAllPaths: bool,
 };
@@ -148,6 +165,10 @@ const CurrentFunctionContext = struct {
 const ErrorLog = common.ErrorLog;
 
 pub const BytecodeGenerator = struct {
+    const FunctionType = struct {
+        retType: Type,
+        args: []ArgInfo,
+    };
     allocator: Allocator,
     // We use 2 stacks to track the state of our variables.
     // scopeExtentStack tracks the amount of variables that are pushed in a scope.
@@ -158,6 +179,7 @@ pub const BytecodeGenerator = struct {
     scopeExtentStack: ScopeExtentStack,
     scopeNamesStack: ScopeNamesStack,
     variableRegistry: std.StringHashMapUnmanaged(HandledOperand),
+    functionRegistry: std.StringHashMapUnmanaged(FunctionType),
     bytecodeList: std.ArrayListUnmanaged(Instruction),
     stringBuffer: std.ArrayListUnmanaged(u8),
     // Tracks how high the stack is currently in RawOperands.
@@ -182,6 +204,7 @@ pub const BytecodeGenerator = struct {
             .bytecodeList = std.ArrayListUnmanaged(Instruction){},
             .stringBuffer = std.ArrayListUnmanaged(u8){},
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
+            .functionRegistry = std.StringHashMapUnmanaged(FunctionType).empty,
             // The first element on the stack is the null handle.
             .stackHeight = 1,
             .entryPoint = .none,
@@ -191,17 +214,24 @@ pub const BytecodeGenerator = struct {
         self.scopeExtentStack.deinit(self.allocator);
         self.scopeNamesStack.deinit(self.allocator);
         self.variableRegistry.deinit(self.allocator);
+        const iter = self.functionRegistry.keyIterator();
+        for (0..iter.len) |i| {
+            // We're not too worried about the key being dropped before this is called.
+            // IN THEORY the source file should live the entire duration of the program.
+            self.allocator.free(self.functionRegistry.get(iter.items[i].?));
+        }
+        self.functionRegistry.deinit(self.allocator);
         self.bytecodeList.deinit(self.allocator);
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn enterFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, argumentTypes: []Type, retType: Type) !void {
+    pub fn enterFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []ArgInfo, retType: Type) !void {
         if (self.currentFunction != null) {
             log.push(CompilationError.FunctionsCannotBeNested);
             return;
         }
         if (std.mem.eql(u8, name, "main")) {
-            if (argumentTypes.len != 0) {
+            if (args.len != 0) {
                 log.push(CompilationError.MainFunctionCannotHaveArgs);
             }
             if (retType != .nil) {
@@ -212,8 +242,16 @@ pub const BytecodeGenerator = struct {
             return;
         }
         std.debug.print("function \"{s}\" ( ", .{name});
-        for (0..argumentTypes.len) |i| {
-            const ty = switch (argumentTypes[i]) {
+
+        for (0..args.len) |i| {
+            const arg = args[i];
+            try self.variableRegistry.put(
+                self.allocator,
+                arg.name,
+                .{ .type = arg.type, .operand = .{ .item = @as(u64, @intCast(self.stackHeight)) + @as(u64, @intCast(i)) } },
+            );
+
+            const ty = switch (arg.type) {
                 .nil => "void",
                 .number, .numberLit => "num",
                 .bool, .boolLit => "bool",
@@ -221,8 +259,10 @@ pub const BytecodeGenerator = struct {
                 .errorType => "ERROR TYPE (man idk)",
             };
 
-            std.debug.print("(type {s}) ", .{ty});
+            std.debug.print("({s}: {s}) ", .{ arg.name, ty });
         }
+        // "push" args, we add one so that the handles resume usage after the args
+        self.stackHeight += @truncate(args.len);
         const ty = switch (retType) {
             .nil => "void",
             .number, .numberLit => "num",
@@ -232,25 +272,29 @@ pub const BytecodeGenerator = struct {
         };
         std.debug.print(") RETURNS {s}\n", .{ty});
 
-        var func: CurrentFunctionContext = .{
-            .argsUsed = argumentTypes.len,
-            .args = undefined,
+        // When the function exits, then we will release this memory.
+        const argsDuped = try self.allocator.dupe(ArgInfo, args);
+        const func: CurrentFunctionContext = .{
+            .args = argsDuped,
             .name = name,
             .retType = retType,
             .returnsOnAllPaths = false,
         };
-        std.mem.copyForwards(Type, &func.args, argumentTypes);
         self.currentFunction = func;
     }
 
-    pub fn exitFunction(self: *BytecodeGenerator) void {
+    pub fn exitFunction(self: *BytecodeGenerator) !void {
+        defer self.currentFunction = null;
         if (self.currentFunction != null) {
             const f = self.currentFunction.?;
             if (!f.returnsOnAllPaths and f.retType != .nil) {
                 std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
             }
+            // We know the scope for the variables will be cleaned up before this, so it's okay
+            self.stackHeight -= @truncate(f.args.len);
+            const func: FunctionType = .{ .args = f.args, .retType = f.retType };
+            try self.functionRegistry.put(self.allocator, f.name, func);
         }
-        self.currentFunction = null;
     }
 
     pub fn enterScope(self: *BytecodeGenerator) void {
@@ -311,8 +355,7 @@ pub const BytecodeGenerator = struct {
     pub fn insertFunctionReturn(self: *BytecodeGenerator, _: HandledOperand) void {
         const name = (self.currentFunction orelse CurrentFunctionContext{
             .name = @constCast("none??"),
-            .args = undefined,
-            .argsUsed = 0,
+            .args = &[_]ArgInfo{},
             .retType = .nil,
             .returnsOnAllPaths = false,
         }).name;
@@ -345,7 +388,6 @@ pub const BytecodeGenerator = struct {
         self.stackHeight -= 1;
         try self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 });
     }
-
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, log: *ErrorLog, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
         // This can store any (built-in) type.

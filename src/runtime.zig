@@ -28,34 +28,28 @@ test "push varstack" {
     stack.deinit();
 }
 
-pub const CallStack = common.Stack(usize, 10000);
-
 pub const VarStack = common.Stack(Operand, 16777215);
 
 pub const Runtime = struct {
     stringAllocator: Allocator,
     variableStack: VarStack,
-    callStack: CallStack,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
             .stringAllocator = stringAllocator,
             .variableStack = try VarStack.init(allocator),
-            .callStack = try CallStack.init(allocator),
         };
     }
     pub fn deinit(self: *Runtime, allocator: Allocator) void {
         self.variableStack.deinit(allocator);
-        self.callStack.deinit(allocator);
     }
 
     pub fn run(self: *Runtime, program: bytecode.Program) void {
         _ = self.variableStack.push(Operand{ .item = 0 });
-        _ = self.callStack.push(0);
         const code = program.instructions;
         var pointer = program.entryPoint;
         // If the main function doesn't return, we'll move all the way to the end and gracefully exit
         // tbh, we shouldn't allow this, but this is just to make sure we don't overflow
-        while (self.callStack.used > 0 and pointer < code.len) {
+        while (pointer < code.len) {
             const ins = code[pointer];
             switch (ins.op.op) {
                 .pushItem => {

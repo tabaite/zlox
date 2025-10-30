@@ -1,15 +1,7 @@
-fun foo() void {
-    var bat = 6 * 7;
-    return 15 + bat;
-}
-
-fun bar(baz: number) number {
-    {
-        return 17 * 2;
-    }
+fun add(a: number, b: number) number {
+    return a + b;
 }
 
 fun main() {
-    foo();
-    bar(27);
+    add(27, 57);
 }

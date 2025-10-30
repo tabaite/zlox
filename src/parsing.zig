@@ -141,6 +141,9 @@ pub const AstParser = struct {
                 },
             }
         }
+        // If there is no active function, this is a no-op.
+        // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
+        try codegen.exitFunction();
     }
 
     fn recordErrorTrace(_: *AstParser, log: *ErrorLog, err: ParsingError) void {
@@ -164,7 +167,7 @@ pub const AstParser = struct {
         }
         self.advance();
 
-        var args: [128]bytecode.Type = undefined;
+        var args: [128]bytecode.ArgInfo = undefined;
         var argCount: usize = 0;
 
         const argStart = self.tryPeek() orelse Token{ .source = null, .tokenType = .invalidChar };
@@ -172,7 +175,7 @@ pub const AstParser = struct {
             const argNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
             if (argNameT.tokenType != .identifier) {
                 self.recordErrorTrace(log, ParsingError.ExpectedIdentifier);
-                args[argCount] = .nil;
+                args[argCount] = .{ .type = .nil, .name = @constCast("a") };
                 break :args;
             } else argType: {
                 self.advance();
@@ -183,18 +186,21 @@ pub const AstParser = struct {
                 }
                 self.advance();
                 const argType: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
-                args[argCount] = switch (argType.tokenType) {
-                    .tyBool => .bool,
-                    .tyNum => .number,
-                    .tyString => .string,
-                    .tyVoid => e: {
-                        self.recordErrorTrace(log, ParsingError.ArgumentCannotBeTypeVoid);
-                        break :e .nil;
+                args[argCount] = .{
+                    .type = switch (argType.tokenType) {
+                        .tyBool => .bool,
+                        .tyNum => .number,
+                        .tyString => .string,
+                        .tyVoid => e: {
+                            self.recordErrorTrace(log, ParsingError.ArgumentCannotBeTypeVoid);
+                            break :e .nil;
+                        },
+                        else => e: {
+                            self.recordErrorTrace(log, ParsingError.ExpectedType);
+                            break :e .nil;
+                        },
                     },
-                    else => e: {
-                        self.recordErrorTrace(log, ParsingError.ExpectedType);
-                        break :e .nil;
-                    },
+                    .name = argNameT.source orelse unreachable,
                 };
             }
             self.advance();
@@ -260,7 +266,7 @@ pub const AstParser = struct {
         try codegen.enterFunction(log, funName, args[0..argCount], retType);
         // Function body
         _ = try self.blockRule(codegen, log);
-        codegen.exitFunction();
+        try codegen.exitFunction();
     }
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!BlockReturnInfo {
