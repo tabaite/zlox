@@ -297,8 +297,12 @@ pub const BytecodeGenerator = struct {
             if (!f.returnsOnAllPaths and f.retType != .nil) {
                 std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
             }
+            for (f.args) |arg| {
+                _ = self.variableRegistry.remove(arg.name);
+            }
             // We know the scope for the variables will be cleaned up before this, so it's okay
             self.stackHeight -= @truncate(f.args.len);
+
             const func: FunctionType = .{ .args = f.args, .retType = f.retType };
             try self.functionRegistry.put(self.allocator, f.name, func);
         }
