@@ -1,3 +1,7 @@
+fun junk(a: number, c: number, d: number) {
+    var s = a * c + d;
+}
+
 fun add(a: number, b: number) number {
     return a + b;
 }

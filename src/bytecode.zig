@@ -165,6 +165,7 @@ const ScopeNamesStack = common.Stack([]u8, 32767);
 const CurrentFunctionContext = struct {
     name: []u8,
     args: []ArgInfo,
+    start: usize,
     retType: Type,
     returnsOnAllPaths: bool,
 };
@@ -173,8 +174,9 @@ const ErrorLog = common.ErrorLog;
 
 pub const BytecodeGenerator = struct {
     const FunctionType = struct {
-        retType: Type,
         args: []ArgInfo,
+        start: usize,
+        retType: Type,
     };
     allocator: Allocator,
     // We use 2 stacks to track the state of our variables.
@@ -280,6 +282,7 @@ pub const BytecodeGenerator = struct {
         // When the function exits, then we will release this memory.
         const argsDuped = try self.allocator.dupe(ArgInfo, args);
         const func: CurrentFunctionContext = .{
+            .start = self.bytecodeList.items.len,
             .args = argsDuped,
             .name = name,
             .retType = retType,
@@ -305,7 +308,7 @@ pub const BytecodeGenerator = struct {
             // We know the scope for the variables will be cleaned up before this, so it's okay
             self.stackHeight -= @truncate(f.args.len);
 
-            const func: FunctionType = .{ .args = f.args, .retType = f.retType };
+            const func: FunctionType = .{ .args = f.args, .retType = f.retType, .start = f.start };
             try self.functionRegistry.put(self.allocator, f.name, func);
         }
     }
@@ -366,6 +369,12 @@ pub const BytecodeGenerator = struct {
                 .dest = 0,
             });
         }
+        try self.bytecodeList.append(self.allocator, Instruction{
+            .op = .{ .argType = .bothHandle, .op = .call },
+            .a = .{ .item = @intCast(func.start) },
+            .b = .NULL_HANDLE,
+            .dest = 0,
+        });
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
@@ -411,6 +420,7 @@ pub const BytecodeGenerator = struct {
             .name = @constCast("none??"),
             .args = &[_]ArgInfo{},
             .retType = .nil,
+            .start = 0,
             .returnsOnAllPaths = false,
         }).name;
         if (self.currentFunction != null) {
@@ -635,7 +645,7 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothLiteral, .literalAHandleB => try out.print("( MOV LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         },
         .noop => _ = try out.write("( NOP "),
-        .call => _ = try out.write("( CAL "),
+        .call => try out.print("( CAL {d} ", .{ins.a.item}),
         .ret => _ = try out.write("( RET "),
         .negateBool => switch (ins.op.argType) {
             .bothHandle, .handleALiteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
