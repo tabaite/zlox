@@ -318,7 +318,7 @@ pub const AstParser = struct {
             return .{ .returnsOnAllPaths = false };
         }
         self.advance();
-        codegen.insertFunctionReturn(try self.expressionRule(codegen, log));
+        try codegen.insertFunctionReturn(try self.expressionRule(codegen, log));
         return .{ .returnsOnAllPaths = true };
     }
 

@@ -81,9 +81,9 @@ pub const OpCode = enum(u30) {
     bOr,
     bAnd,
 
-    // A: Location of function to call, B: Number of items on the stack to swipe from the top, Dest: Location of return item, Arg Type: Unused
+    // A: Location of function to call, B, Dest, Arg Type: Unused
     call,
-    // A, B, Arg Type, Dest: Unused
+    // All unused
     ret,
 
     // A: Item to move (literal or handle), B: Unused, Dest: Where to move to, Arg Type: Used for A
@@ -244,9 +244,7 @@ pub const BytecodeGenerator = struct {
             if (retType != .nil) {
                 log.push(CompilationError.MainFunctionCannotReturnValue);
             }
-            std.debug.print("ENTRY POINT main\n", .{});
             self.entryPoint = @enumFromInt(self.bytecodeList.items.len + 1);
-            return;
         }
         std.debug.print("function \"{s}\" ( ", .{name});
 
@@ -294,8 +292,12 @@ pub const BytecodeGenerator = struct {
         defer self.currentFunction = null;
         if (self.currentFunction != null) {
             const f = self.currentFunction.?;
-            if (!f.returnsOnAllPaths and f.retType != .nil) {
-                std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
+            if (!f.returnsOnAllPaths) {
+                if (f.retType != .nil) {
+                    std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
+                } else {
+                    try self.insertFunctionReturn(.NIL);
+                }
             }
             for (f.args) |arg| {
                 _ = self.variableRegistry.remove(arg.name);
@@ -404,7 +406,7 @@ pub const BytecodeGenerator = struct {
         return try self.moveOperand(new, handle.*);
     }
 
-    pub fn insertFunctionReturn(self: *BytecodeGenerator, _: HandledOperand) void {
+    pub fn insertFunctionReturn(self: *BytecodeGenerator, _: HandledOperand) !void {
         const name = (self.currentFunction orelse CurrentFunctionContext{
             .name = @constCast("none??"),
             .args = &[_]ArgInfo{},
@@ -415,6 +417,7 @@ pub const BytecodeGenerator = struct {
             self.currentFunction.?.returnsOnAllPaths = true;
         }
         std.debug.print("returning from {s}!\n", .{name});
+        try self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 });
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
@@ -632,6 +635,8 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
             .bothLiteral, .literalAHandleB => try out.print("( MOV LIT(ASNUM({d}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         },
         .noop => _ = try out.write("( NOP "),
+        .call => _ = try out.write("( CAL "),
+        .ret => _ = try out.write("( RET "),
         .negateBool => switch (ins.op.argType) {
             .bothHandle, .handleALiteralB => try out.print("( NOT HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( NOT LIT({s}) ", .{if (ins.a.item != 0) "TRUE" else "FALSE"}),
