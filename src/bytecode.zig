@@ -14,6 +14,8 @@ pub const CompilationError = error{
     MainFunctionNotDeclared,
     MainFunctionCannotHaveArgs,
     MainFunctionCannotReturnValue,
+    IncorrectArgumentType,
+    WrongNumberOfArguments,
 };
 
 // function calls:
@@ -51,6 +53,9 @@ pub const OpCode = enum(u30) {
     // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
     // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
     pushItem,
+    // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
+    // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
+    pushArgument,
     // If the argument type is a handle, we push 0, and then assign the value of the handle to the new handle.
     // A: Item to be pushed, B: Unused, Dest: Unused, Arg Type: Used for A
     pop,
@@ -312,6 +317,47 @@ pub const BytecodeGenerator = struct {
             try self.popFromStack();
         }
         std.debug.print("exited scope\n", .{});
+    }
+
+    pub fn callFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []HandledOperand) !void {
+        const func = self.functionRegistry.get(name) orelse {
+            log.push(CompilationError.FunctionNotDeclared);
+            return;
+        };
+
+        const argLen = l: {
+            if (args.len != func.args.len) {
+                log.push(CompilationError.WrongNumberOfArguments);
+                break :l @min(args.len, func.args.len);
+            } else {
+                break :l args.len;
+            }
+        };
+
+        for (0..argLen) |i| {
+            const arg = args[i];
+            const argDecayedType = switch (arg.type) {
+                .boolLit => .bool,
+                .numberLit => .number,
+                else => |s| s,
+            };
+            const argType: ArgTypes = switch (arg.type) {
+                .boolLit, .numberLit => .literalAHandleB,
+                else => .handleALiteralB,
+            };
+            const defArg = func.args[i];
+
+            if (argDecayedType != defArg.type) {
+                log.push(CompilationError.IncorrectArgumentType);
+            }
+
+            try self.bytecodeList.append(self.allocator, Instruction{
+                .op = .{ .argType = argType, .op = .pushArgument },
+                .a = arg.operand,
+                .b = .NULL_HANDLE,
+                .dest = 0,
+            });
+        }
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
@@ -592,6 +638,10 @@ pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
         .pushItem => switch (ins.op.argType) {
             .bothHandle, .handleALiteralB => try out.print("( PSH HANDLE({d}) ", .{ins.a.item}),
             .bothLiteral, .literalAHandleB => try out.print("( PSH LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
+        },
+        .pushArgument => switch (ins.op.argType) {
+            .bothHandle, .handleALiteralB => try out.print("( ARG HANDLE({d}) ", .{ins.a.item}),
+            .bothLiteral, .literalAHandleB => try out.print("( ARG LIT(ASNUM({d:.4}), ASBOOL({s}), ASUINT({d})) ", .{ @as(f64, @bitCast(ins.a.item)), if (ins.a.item != 0) "TRUE" else "FALSE", ins.a.item }),
         },
         else => {
             const name = switch (ins.op.op) {
