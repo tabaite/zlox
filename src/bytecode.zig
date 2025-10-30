@@ -18,6 +18,8 @@ pub const CompilationError = error{
     WrongNumberOfArguments,
 };
 
+pub const MAX_ARGS = 128;
+
 // function calls:
 // use new pushArg instruction to push instructions into a buffer
 // when calling, we put the number of pushed args onto the callstack

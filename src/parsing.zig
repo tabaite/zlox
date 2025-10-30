@@ -25,6 +25,7 @@ const common = @import("common.zig");
 //                | "(" expression ")"
 // type           → "number" | "bool" | "string" | "void"
 
+const MAX_ARGS = bytecode.MAX_ARGS;
 const Token = scanning.Token;
 const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
@@ -167,7 +168,7 @@ pub const AstParser = struct {
         }
         self.advance();
 
-        var args: [128]bytecode.ArgInfo = undefined;
+        var args: [MAX_ARGS]bytecode.ArgInfo = undefined;
         var argCount: usize = 0;
 
         const argStart = self.tryPeek() orelse Token{ .source = null, .tokenType = .invalidChar };
@@ -207,7 +208,7 @@ pub const AstParser = struct {
             const continuation: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
             switch (continuation.tokenType) {
                 .rightParen => {
-                    if (argCount == 127) {
+                    if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         self.recordErrorTrace(log, ParsingError.ArgLimit128);
                         break :args;
@@ -218,7 +219,7 @@ pub const AstParser = struct {
                 },
                 .comma => {
                     self.advance();
-                    if (argCount == 127) {
+                    if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         self.recordErrorTrace(log, ParsingError.ArgLimit128);
                         break :args;
@@ -462,7 +463,7 @@ pub const AstParser = struct {
             .leftParen => {
                 self.advance();
 
-                var args: [128]Handle = undefined;
+                var args: [MAX_ARGS]Handle = undefined;
                 var argNums: usize = 0;
                 while (self.tryPeek()) |t| {
                     if (t.tokenType == .rightParen) {
@@ -476,7 +477,7 @@ pub const AstParser = struct {
                     if (seperator.tokenType != .comma) {
                         break;
                     }
-                    if (argNums < 128) {
+                    if (argNums < MAX_ARGS) {
                         self.advance();
                     } else {
                         self.recordErrorTrace(log, ParsingError.ArgLimit128);
