@@ -214,8 +214,8 @@ pub const BytecodeGenerator = struct {
             .stringBuffer = std.ArrayListUnmanaged(u8){},
             .variableRegistry = std.StringHashMapUnmanaged(HandledOperand).empty,
             .functionRegistry = std.StringHashMapUnmanaged(FunctionType).empty,
-            // The first element on the stack is the null handle.
-            .stackHeight = 1,
+            // 0: Null handle, 1: Return handle
+            .stackHeight = 2,
             .entryPoint = .none,
         };
     }
@@ -330,10 +330,10 @@ pub const BytecodeGenerator = struct {
         std.debug.print("exited scope\n", .{});
     }
 
-    pub fn callFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []HandledOperand) !void {
+    pub fn callFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []HandledOperand) !HandledOperand {
         const func = self.functionRegistry.get(name) orelse {
             log.push(CompilationError.FunctionNotDeclared);
-            return;
+            return .ERR;
         };
 
         const argLen = l: {
@@ -375,6 +375,7 @@ pub const BytecodeGenerator = struct {
             .b = .NULL_HANDLE,
             .dest = 0,
         });
+        return HandledOperand{ .type = func.retType, .operand = .RET_HANDLE };
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {

@@ -147,7 +147,8 @@ pub fn main() !void {
 
             _ = try stderr.write("\nreally hacky stack vis:\n");
             _ = try stderr.write("( NULL )\n");
-            for (1..rt.variableStack.used) |i| {
+            _ = try stderr.write("( RET )\n");
+            for (2..rt.variableStack.used) |i| {
                 try bytecode.printInstruction(.{
                     .a = rt.variableStack.backing[i],
                     .b = .NULL_HANDLE,

@@ -493,8 +493,7 @@ pub const AstParser = struct {
                     return .ERR;
                 }
                 self.advance();
-                try codegen.callFunction(log, name.source orelse unreachable, args[0..argNums]);
-                return Handle.NIL;
+                return try codegen.callFunction(log, name.source orelse unreachable, args[0..argNums]);
             },
             .equal => {
                 self.advance();

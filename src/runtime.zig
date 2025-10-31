@@ -28,22 +28,36 @@ test "push varstack" {
     stack.deinit();
 }
 
+const Call = struct { returnPosition: usize, varStackHeight: usize };
+
+// The usize counts how high the stack is in terms of variables (ABSOLUTE POSITION).
+pub const CallStack = common.Stack(Call, 16777215);
 pub const VarStack = common.Stack(Operand, 16777215);
+pub const ArgBuffer = common.Stack(Operand, 128);
 
 pub const Runtime = struct {
     stringAllocator: Allocator,
     variableStack: VarStack,
+    callStack: CallStack,
+    argBuffer: ArgBuffer,
     pub fn init(allocator: Allocator, stringAllocator: Allocator) !Runtime {
         return .{
             .stringAllocator = stringAllocator,
             .variableStack = try VarStack.init(allocator),
+            .argBuffer = try ArgBuffer.init(allocator),
+            .callStack = try CallStack.init(allocator),
         };
     }
     pub fn deinit(self: *Runtime, allocator: Allocator) void {
         self.variableStack.deinit(allocator);
+        self.argBuffer.deinit(allocator);
+        self.callStack.deinit(allocator);
     }
 
     pub fn run(self: *Runtime, program: bytecode.Program) void {
+        // Null handle
+        _ = self.variableStack.push(Operand{ .item = 0 });
+        // Return handle
         _ = self.variableStack.push(Operand{ .item = 0 });
         const code = program.instructions;
         var pointer = program.entryPoint;
@@ -52,6 +66,33 @@ pub const Runtime = struct {
         while (pointer < code.len) {
             const ins = code[pointer];
             switch (ins.op.op) {
+                .pushArgument => {
+                    const val = switch (ins.op.argType) {
+                        .literalAHandleB, .bothLiteral => ins.a,
+                        .handleALiteralB, .bothHandle => self.variableStack.backing[@truncate(ins.a.item)],
+                    };
+                    _ = self.argBuffer.push(val);
+                },
+                .call => {
+                    self.callStack.push(Call{ .varStackHeight = self.variableStack.height(), .returnPosition = pointer + 1 });
+                    const args = self.argBuffer.backing[0..self.argBuffer.used];
+                    for (args) |a| {
+                        _ = self.variableStack.push(a);
+                    }
+                    pointer = @intCast(ins.a.item);
+                },
+                .ret => {
+                    // callStack.pop() is only null if there is no stack left. In this case, we are done.
+                    const previousCall = self.callStack.pop() orelse return;
+                    const height = self.variableStack.height();
+                    if (previousCall.varStackHeight > height) {
+                        @panic("Calling convention was violated!");
+                    }
+                    for (0..height - previousCall.varStackHeight) |_| {
+                        _ = self.variableStack.pop();
+                    }
+                    pointer = previousCall.returnPosition;
+                },
                 .pushItem => {
                     const val = switch (ins.op.argType) {
                         .literalAHandleB, .bothLiteral => ins.a,
