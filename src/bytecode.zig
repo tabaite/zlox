@@ -422,19 +422,18 @@ pub const BytecodeGenerator = struct {
         return try self.moveOperand(new, handle.*);
     }
 
-    pub fn insertFunctionReturn(self: *BytecodeGenerator, _: HandledOperand) !void {
-        const name = (self.currentFunction orelse CurrentFunctionContext{
-            .name = @constCast("none??"),
-            .args = &[_]ArgInfo{},
-            .retType = .nil,
-            .start = 0,
-            .returnsOnAllPaths = false,
-        }).name;
-        if (self.currentFunction != null) {
-            self.currentFunction.?.returnsOnAllPaths = true;
+    pub fn insertFunctionReturn(self: *BytecodeGenerator, log: *ErrorLog, val: HandledOperand) !void {
+        const f = self.currentFunction orelse return;
+        self.currentFunction.?.returnsOnAllPaths = true;
+        if (val.type != f) {
+            log.push(CompilationError.IncompatibleType);
+            return HandledOperand.ERR;
         }
-        std.debug.print("returning from {s}!\n", .{name});
         try self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 });
+        if (f.retType != .nil) {
+            const ret = HandledOperand{ .type = f.retType, .operand = RawOperand.RET_HANDLE };
+            try self.moveOperand(val, ret);
+        }
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
