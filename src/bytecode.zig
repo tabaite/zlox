@@ -90,7 +90,13 @@ pub const OpCode = enum(u30) {
     move,
 };
 
-pub const Operation = struct {
+test "correct sizing for instructions" {
+    const assert = std.testing.expect;
+    try assert(@sizeOf(Operation) == 4);
+    try assert(@sizeOf(Instruction) == 24);
+}
+
+pub const Operation = packed struct {
     argType: ArgTypes,
     op: OpCode,
 };
