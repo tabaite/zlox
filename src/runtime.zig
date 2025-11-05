@@ -82,7 +82,6 @@ pub const Runtime = struct {
                     pointer = @intCast(ins.a.item);
                 },
                 .ret => {
-                    // callStack.pop() is only null if there is no stack left. In this case, we are done.
                     const previousCall = self.callStack.pop() orelse return;
                     const height = self.variableStack.height();
                     if (previousCall.varStackHeight > height) {

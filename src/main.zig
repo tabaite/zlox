@@ -145,16 +145,8 @@ pub fn main() !void {
             defer rt.deinit(astAlloc);
             rt.run(program);
 
-            _ = try stderr.write("\nreally hacky stack vis:\n");
-            _ = try stderr.write("( NULL )\n");
-            _ = try stderr.write("( RET )\n");
-            for (2..rt.variableStack.used) |i| {
-                try bytecode.printInstruction(.{
-                    .a = rt.variableStack.backing[i],
-                    .b = .NULL_HANDLE,
-                    .dest = @truncate(i),
-                    .op = .{ .argType = .bothLiteral, .op = .pushItem },
-                }, stderrAny);
+            if (rt.variableStack.used > 2) {
+                try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
             }
         },
         .unknown => {

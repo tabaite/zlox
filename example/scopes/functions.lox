@@ -6,6 +6,10 @@ fun add(a: number, b: number) number {
     return a + b;
 }
 
+fun isSixOne(a: number) bool {
+    return a == 61;
+}
+
 fun main() {
-    add(27, 57);
+    var e = isSixOne(add(27, 57));
 }
