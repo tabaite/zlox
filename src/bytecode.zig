@@ -297,7 +297,7 @@ pub const BytecodeGenerator = struct {
         self.currentFunction = func;
     }
 
-    pub fn exitFunction(self: *BytecodeGenerator) !void {
+    pub fn exitFunction(self: *BytecodeGenerator, log: *ErrorLog) !void {
         defer self.currentFunction = null;
         if (self.currentFunction != null) {
             const f = self.currentFunction.?;
@@ -305,7 +305,7 @@ pub const BytecodeGenerator = struct {
                 if (f.retType != .nil) {
                     std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
                 } else {
-                    try self.insertFunctionReturn(.NIL);
+                    try self.insertFunctionReturn(log, .NIL);
                 }
             }
             for (f.args) |arg| {
@@ -425,15 +425,15 @@ pub const BytecodeGenerator = struct {
     pub fn insertFunctionReturn(self: *BytecodeGenerator, log: *ErrorLog, val: HandledOperand) !void {
         const f = self.currentFunction orelse return;
         self.currentFunction.?.returnsOnAllPaths = true;
-        if (val.type != f) {
+        if (val.type != f.retType) {
             log.push(CompilationError.IncompatibleType);
-            return HandledOperand.ERR;
+            return;
         }
-        try self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 });
         if (f.retType != .nil) {
             const ret = HandledOperand{ .type = f.retType, .operand = RawOperand.RET_HANDLE };
-            try self.moveOperand(val, ret);
+            _ = try self.moveOperand(val, ret);
         }
+        try self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 });
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {

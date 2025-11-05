@@ -122,7 +122,7 @@ pub const AstParser = struct {
         }
         // If there is no active function, this is a no-op.
         // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
-        try codegen.exitFunction();
+        try codegen.exitFunction(log);
     }
 
     fn recordErrorTrace(_: *AstParser, log: *ErrorLog, err: ParsingError) void {
@@ -245,7 +245,7 @@ pub const AstParser = struct {
         try codegen.enterFunction(log, funName, args[0..argCount], retType);
         // Function body
         _ = try self.blockRule(codegen, log);
-        try codegen.exitFunction();
+        try codegen.exitFunction(log);
     }
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!BlockReturnInfo {
@@ -296,7 +296,7 @@ pub const AstParser = struct {
             return .{ .returnsOnAllPaths = false };
         }
         self.advance();
-        try codegen.insertFunctionReturn(try self.expressionRule(codegen, log));
+        try codegen.insertFunctionReturn(log, try self.expressionRule(codegen, log));
         return .{ .returnsOnAllPaths = true };
     }
 
