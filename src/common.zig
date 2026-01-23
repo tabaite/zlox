@@ -7,6 +7,77 @@ const scanning = @import("scanning.zig");
 
 const Allocator = std.mem.Allocator;
 
+const Token = scanning.Token;
+
+pub const Error = union(enum) {
+    // SCANNING ERRORS
+    /// When we can't recognize.
+    /// Example:
+    /// fun 屿()
+    /// ----^ we don't do "unicode" around here bub
+    illegal_token: struct {
+        // has to be a slice since illegal
+        // tokens may be unicode we can't recognize
+        // i promise we will eventually have utf-8 support
+        token: []u8,
+    },
+
+    // PARSING ERRORS
+    /// Parsing errors where one token was expected,
+    /// but something else was found.
+    /// Example:
+    /// fun * ()
+    /// ----^ expected IDENTIFIER, found STAR
+    expected_token: struct {
+        found: Token,
+        expected: Token,
+    },
+
+    /// Parsing errors where we expect a type but find
+    /// whatever else.
+    /// Example:
+    /// fun ewrerwr() / {}
+    /// --------------^ expected type, found SLASH
+    expected_valid_type: struct { found: Token },
+
+    // COMPILE ERRORS
+    arg_limit_exceeded,
+    argument_type_cannot_be_void,
+    argument_type_incorrect: struct {
+        found: Token,
+        expected: Token,
+    },
+
+    // maybe we don't need the distinction but whatever
+    // For when we find an incompatible type on an operation.
+    incompatible_type_unary: struct {
+        operation: parsing.UnaryExprType,
+        found_type: bytecode.Type,
+    },
+    incompatible_type_binary: struct {
+        operation: parsing.BinaryExprType,
+        lhs_type: bytecode.Type,
+        rhs_type: bytecode.Type,
+    },
+
+    // Referencing something that does
+    // not exist.
+    // Example:
+    // var rad = 5;
+    // var area = pi * rad * rad;
+    // -----------^ pi not defined
+    variable_not_defined,
+    function_not_defined,
+    // Defining a new var/function with
+    // the same name as an existing function.
+    // Example:
+    // var rad = 5;
+    // var rad = 15;
+    // -----------^ rad already defined
+    variable_already_defined,
+    function_already_defined,
+};
+
 pub const CompileError = parsing.ParsingError || bytecode.CompilationError;
 pub const ErrorTrace = struct {
     err: CompileError,
