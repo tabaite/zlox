@@ -7,6 +7,7 @@ const scanning = @import("scanning.zig");
 
 const Allocator = std.mem.Allocator;
 
+const Type = bytecode.Type;
 const Token = scanning.Token;
 
 pub const Error = union(enum) {
@@ -38,26 +39,26 @@ pub const Error = union(enum) {
     /// Example:
     /// fun ewrerwr() / {}
     /// --------------^ expected type, found SLASH
-    expected_valid_type: struct { found: Token },
+    expected_type_token: struct { found: Token },
 
     // COMPILE ERRORS
     arg_limit_exceeded,
     argument_type_cannot_be_void,
     argument_type_incorrect: struct {
-        found: Token,
-        expected: Token,
+        found: Type,
+        expected: Type,
     },
 
     // maybe we don't need the distinction but whatever
     // For when we find an incompatible type on an operation.
     incompatible_type_unary: struct {
         operation: parsing.UnaryExprType,
-        found_type: bytecode.Type,
+        found_type: Type,
     },
     incompatible_type_binary: struct {
         operation: parsing.BinaryExprType,
-        lhs_type: bytecode.Type,
-        rhs_type: bytecode.Type,
+        lhs_type: Type,
+        rhs_type: Type,
     },
 
     // Referencing something that does
@@ -78,12 +79,12 @@ pub const Error = union(enum) {
     function_already_defined,
 };
 
-pub const CompileError = parsing.ParsingError || bytecode.CompilationError;
 pub const ErrorTrace = struct {
-    err: CompileError,
+    err: Error,
     lineNum: u32,
     line: []u8,
 };
+
 pub const ErrorLog = struct {
     const BACKINGSIZE = 32767;
     // li'l bit spaghetti
@@ -99,7 +100,7 @@ pub const ErrorLog = struct {
         };
     }
 
-    pub fn push(self: *ErrorLog, err: CompileError) void {
+    pub fn push(self: *ErrorLog, err: Error) void {
         var start: usize = 0;
         var end = self.context.source.len;
 

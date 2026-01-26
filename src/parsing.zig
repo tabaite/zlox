@@ -13,6 +13,8 @@ pub const ErrorTrace = common.ErrorTrace;
 
 const Handle = bytecode.HandledOperand;
 
+const Error = common.Error;
+
 const ErrorSet = ParsingError || bytecode.CompilationError;
 const ParseErrorSet = Allocator.Error || ErrorSet;
 
@@ -78,7 +80,8 @@ const BlockReturnInfo = struct {
     returnsOnAllPaths: bool,
 };
 
-fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBinaryExpr) ?BinaryExprType {
+// HELPERS
+inline fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBinaryExpr) ?BinaryExprType {
     for (matches) |t| {
         if (t.key == target) {
             return t.value;
@@ -87,13 +90,24 @@ fn matchTokenToExprOrNull(target: scanning.TokenType, matches: []const TokenToBi
     return null;
 }
 
+inline fn recordErrorTrace(log: *ErrorLog, err: Error) void {
+    log.push(err);
+}
+
+inline fn token(tt: scanning.TokenType) Token {
+    return .{ .source = null, .tokenType = tt };
+}
+
+inline fn iden(i: []u8) Token {
+    return .{ .source = i, .tokenType = .identifier };
+}
+
 pub const AstParser = struct {
     iter: *scanning.TokenIterator,
     lastToken: ?Token,
-    errorList: std.ArrayList(ErrorTrace),
 
-    pub fn new(iter: *scanning.TokenIterator, allocator: Allocator) AstParser {
-        return .{ .iter = iter, .lastToken = iter.next(), .errorList = .init(allocator) };
+    pub fn new(iter: *scanning.TokenIterator) AstParser {
+        return .{ .iter = iter, .lastToken = iter.next() };
     }
 
     // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
@@ -115,7 +129,7 @@ pub const AstParser = struct {
                 .leftBrace => _ = try self.blockRule(codegen, log),
                 .kwFun => try self.functionDeclarationRule(codegen, log),
                 else => {
-                    self.recordErrorTrace(log, ParsingError.GlobalScopeNoLongerUsable);
+                    recordErrorTrace(log, ParsingError.GlobalScopeNoLongerUsable);
                     _ = try self.statementRule(codegen, log);
                 },
             }
@@ -125,24 +139,20 @@ pub const AstParser = struct {
         try codegen.exitFunction(log);
     }
 
-    fn recordErrorTrace(_: *AstParser, log: *ErrorLog, err: ParsingError) void {
-        log.push(err);
-    }
-
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
         const fun: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (fun.tokenType != .kwFun) {
-            self.recordErrorTrace(log, ParsingError.ExpectedKwFun);
+            recordErrorTrace(log, Error{ .expected_token = .{ .expected = .{ .source = null, .tokenType = .kwFun }, .found = .{} } });
         }
         self.advance();
         const funNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (funNameT.tokenType != .identifier) {
-            self.recordErrorTrace(log, ParsingError.ExpectedIdentifier);
+            recordErrorTrace(log, ParsingError.ExpectedIdentifier);
         }
         self.advance();
         const open: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (open.tokenType != .leftParen) {
-            self.recordErrorTrace(log, ParsingError.ExpectedOpeningParen);
+            recordErrorTrace(log, ParsingError.ExpectedOpeningParen);
         }
         self.advance();
 
@@ -153,14 +163,14 @@ pub const AstParser = struct {
         if (argStart.tokenType != .rightParen) args: while (self.tryPeek()) |_| {
             const argNameT: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
             if (argNameT.tokenType != .identifier) {
-                self.recordErrorTrace(log, ParsingError.ExpectedIdentifier);
+                recordErrorTrace(log, ParsingError.ExpectedIdentifier);
                 args[argCount] = .{ .type = .nil, .name = @constCast("a") };
                 break :args;
             } else argType: {
                 self.advance();
                 const colon: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
                 if (colon.tokenType != .colon) {
-                    self.recordErrorTrace(log, ParsingError.ExpectedType);
+                    recordErrorTrace(log, ParsingError.ExpectedType);
                     break :argType;
                 }
                 self.advance();
@@ -171,11 +181,11 @@ pub const AstParser = struct {
                         .tyNum => .number,
                         .tyString => .string,
                         .tyVoid => e: {
-                            self.recordErrorTrace(log, ParsingError.ArgumentCannotBeTypeVoid);
+                            recordErrorTrace(log, ParsingError.ArgumentCannotBeTypeVoid);
                             break :e .nil;
                         },
                         else => e: {
-                            self.recordErrorTrace(log, ParsingError.ExpectedType);
+                            recordErrorTrace(log, ParsingError.ExpectedType);
                             break :e .nil;
                         },
                     },
@@ -188,7 +198,7 @@ pub const AstParser = struct {
                 .rightParen => {
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                        self.recordErrorTrace(log, ParsingError.ArgLimit128);
+                        recordErrorTrace(log, ParsingError.ArgLimit128);
                         break :args;
                     } else {
                         argCount += 1;
@@ -199,19 +209,19 @@ pub const AstParser = struct {
                     self.advance();
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                        self.recordErrorTrace(log, ParsingError.ArgLimit128);
+                        recordErrorTrace(log, ParsingError.ArgLimit128);
                         break :args;
                     } else {
                         argCount += 1;
                     }
                 },
-                else => self.recordErrorTrace(log, ParsingError.ExpectedComma),
+                else => recordErrorTrace(log, ParsingError.ExpectedComma),
             }
         };
 
         const close: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (close.tokenType != .rightParen) {
-            self.recordErrorTrace(log, ParsingError.ExpectedClosingParen);
+            recordErrorTrace(log, ParsingError.ExpectedClosingParen);
         }
         self.advance();
         const rt: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
@@ -237,7 +247,7 @@ pub const AstParser = struct {
             .leftBrace => break :ret .nil,
             else => {
                 self.advance();
-                self.recordErrorTrace(log, ParsingError.ExpectedType);
+                recordErrorTrace(log, ParsingError.ExpectedType);
                 break :ret .nil;
             },
         };
@@ -251,14 +261,14 @@ pub const AstParser = struct {
     fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!BlockReturnInfo {
         const opening: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (opening.tokenType != .leftBrace) {
-            self.recordErrorTrace(log, ParsingError.ExpectedOpeningBrace);
+            recordErrorTrace(log, ParsingError.ExpectedOpeningBrace);
         }
         self.advance();
         codegen.enterScope();
         const retInfo = try self.blockBodyRule(codegen, log);
         const closing: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (closing.tokenType != .rightBrace) {
-            self.recordErrorTrace(log, ParsingError.ExpectedClosingBrace);
+            recordErrorTrace(log, ParsingError.ExpectedClosingBrace);
         }
         try codegen.exitScope();
         self.advance();
@@ -282,7 +292,7 @@ pub const AstParser = struct {
         const blockRetInfo = try self.returnRule(codegen, log);
         const end: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (end.tokenType != .semicolon) {
-            self.recordErrorTrace(log, ParsingError.ExpectedSemicolon);
+            recordErrorTrace(log, ParsingError.ExpectedSemicolon);
         } else {
             self.advance();
         }
@@ -309,7 +319,7 @@ pub const AstParser = struct {
         self.advance();
         const name: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
         if (name.tokenType != .identifier) {
-            self.recordErrorTrace(log, ParsingError.ExpectedIdentifier);
+            recordErrorTrace(log, ParsingError.ExpectedIdentifier);
         }
 
         self.advance();
@@ -324,11 +334,11 @@ pub const AstParser = struct {
                     .tyString => .string,
                     .tyVoid => .nil,
                     .identifier => e: {
-                        self.recordErrorTrace(log, ParsingError.CustomTypesNotYetSupported);
+                        recordErrorTrace(log, ParsingError.CustomTypesNotYetSupported);
                         break :e .nil;
                     },
                     else => e: {
-                        self.recordErrorTrace(log, ParsingError.ExpectedType);
+                        recordErrorTrace(log, ParsingError.ExpectedType);
                         break :e .nil;
                     },
                 };
@@ -344,7 +354,7 @@ pub const AstParser = struct {
                             break :val try self.expressionRule(codegen, log);
                         },
                         else => {
-                            self.recordErrorTrace(log, ParsingError.ExpectedToken);
+                            recordErrorTrace(log, ParsingError.ExpectedToken);
                             break :val null;
                         },
                     }
@@ -353,7 +363,7 @@ pub const AstParser = struct {
                 return;
             },
             .semicolon => {
-                self.recordErrorTrace(log, ParsingError.ExpectedTypeAtVariableDeclaration);
+                recordErrorTrace(log, ParsingError.ExpectedTypeAtVariableDeclaration);
                 return;
             },
             .equal => {
@@ -362,7 +372,7 @@ pub const AstParser = struct {
                 return;
             },
             else => {
-                self.recordErrorTrace(log, ParsingError.ExpectedToken);
+                recordErrorTrace(log, ParsingError.ExpectedToken);
                 return;
             },
         }
@@ -458,7 +468,7 @@ pub const AstParser = struct {
                     if (argNums < MAX_ARGS) {
                         self.advance();
                     } else {
-                        self.recordErrorTrace(log, ParsingError.ArgLimit128);
+                        recordErrorTrace(log, ParsingError.ArgLimit128);
                     }
                 }
 
@@ -495,7 +505,7 @@ pub const AstParser = struct {
                 // the token will be the token following expr
                 const current: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
                 if (current.tokenType != .rightParen) {
-                    self.recordErrorTrace(log, ParsingError.ExpectedClosingParen);
+                    recordErrorTrace(log, ParsingError.ExpectedClosingParen);
                 }
                 self.advance();
                 break :grouping expr;
