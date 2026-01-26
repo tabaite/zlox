@@ -9,6 +9,7 @@ const Allocator = std.mem.Allocator;
 
 const Type = bytecode.Type;
 const Token = scanning.Token;
+const TokenType = scanning.TokenType;
 
 pub const Error = union(enum) {
     // SCANNING ERRORS
@@ -16,7 +17,7 @@ pub const Error = union(enum) {
     /// Example:
     /// fun 屿()
     /// ----^ we don't do "unicode" around here bub
-    illegal_token: struct {
+    illegalToken: struct {
         // has to be a slice since illegal
         // tokens may be unicode we can't recognize
         // i promise we will eventually have utf-8 support
@@ -29,9 +30,10 @@ pub const Error = union(enum) {
     /// Example:
     /// fun * ()
     /// ----^ expected IDENTIFIER, found STAR
-    expected_token: struct {
-        found: Token,
-        expected: Token,
+    expectedToken: struct {
+        // We can expect something and find null.
+        found: ?Token,
+        expected: TokenType,
     },
 
     /// Parsing errors where we expect a type but find
@@ -39,26 +41,31 @@ pub const Error = union(enum) {
     /// Example:
     /// fun ewrerwr() / {}
     /// --------------^ expected type, found SLASH
-    expected_type_token: struct { found: Token },
+    expectedTypeToken: struct {
+        // We can expect something and find null.
+        found: ?Token,
+    },
 
     // COMPILE ERRORS
-    arg_limit_exceeded,
-    argument_type_cannot_be_void,
-    argument_type_incorrect: struct {
+    argLimitExceeded,
+
+    argumentMustHaveType,
+    argumentTypeCannotBeVoid,
+    argumentTypeIncorrect: struct {
         found: Type,
         expected: Type,
     },
 
     // maybe we don't need the distinction but whatever
     // For when we find an incompatible type on an operation.
-    incompatible_type_unary: struct {
+    incompatibleTypeUnary: struct {
         operation: parsing.UnaryExprType,
-        found_type: Type,
+        foundType: Type,
     },
-    incompatible_type_binary: struct {
+    incompatibleTypeBinary: struct {
         operation: parsing.BinaryExprType,
-        lhs_type: Type,
-        rhs_type: Type,
+        lhsType: Type,
+        rhsType: Type,
     },
 
     // Referencing something that does
@@ -67,16 +74,16 @@ pub const Error = union(enum) {
     // var rad = 5;
     // var area = pi * rad * rad;
     // -----------^ pi not defined
-    variable_not_defined,
-    function_not_defined,
+    variableNotDefined,
+    functionNotDefined,
     // Defining a new var/function with
     // the same name as an existing function.
     // Example:
     // var rad = 5;
     // var rad = 15;
     // -----------^ rad already defined
-    variable_already_defined,
-    function_already_defined,
+    variableAlreadyDefined,
+    functionAlreadyDefined,
 };
 
 pub const ErrorTrace = struct {
