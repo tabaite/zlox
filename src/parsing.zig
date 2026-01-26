@@ -15,29 +15,6 @@ const Handle = bytecode.HandledOperand;
 
 const Error = common.Error;
 
-const ErrorSet = ParsingError || bytecode.CompilationError;
-const ParseErrorSet = Allocator.Error || ErrorSet;
-
-pub const ParsingError = error{
-    GlobalScopeNoLongerUsable,
-    UnexpectedToken,
-    ExpectedToken,
-    ExpectedKwFun,
-    ExpectedComma,
-    ExpectedSemicolon,
-    ArgLimit128,
-    ExpectedOpeningParen,
-    ExpectedClosingParen,
-    ExpectedOpeningBrace,
-    ExpectedClosingBrace,
-    ExpectedIdentifier,
-    ExpectedExpression,
-    ExpectedType,
-    CustomTypesNotYetSupported,
-    ArgumentCannotBeTypeVoid,
-    ExpectedTypeAtVariableDeclaration,
-};
-
 pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
 
 pub const BinaryExprType = enum {
@@ -66,10 +43,6 @@ const TokenToBinaryExpr = struct {
     value: BinaryExprType,
 };
 
-const FunctionContext = struct {
-    retType: bytecode.Type,
-};
-
 const BlockReturnInfo = struct {
     // Not used yet (apart from implicit returns)
     // But will be useful for control flow in the future.
@@ -82,7 +55,7 @@ const BlockReturnInfo = struct {
 
 // HELPERS
 inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: []const TokenToBinaryExpr) ?BinaryExprType {
-    for (matches) |t| {
+    inline for (matches) |t| {
         if (t.key == target) {
             return t.value;
         }
@@ -90,21 +63,9 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
     return null;
 }
 
-inline fn recordErrorTrace(log: *ErrorLog, err: Error) void {
-    log.push(err);
-}
-
-inline fn token(tt: scanning.TokenType) Token {
-    return .{ .source = null, .tokenType = tt };
-}
-
 /// Token or Invalid
 inline fn toi(t: ?Token) Token {
-    return t orelse token(.invalidChar);
-}
-
-inline fn iden(i: []u8) Token {
-    return .{ .source = i, .tokenType = .identifier };
+    return t orelse .{ .source = null, .tokenType = .invalidChar };
 }
 
 pub const AstParser = struct {
@@ -124,7 +85,7 @@ pub const AstParser = struct {
         self.lastToken = self.iter.next();
     }
 
-    inline fn matchCurrentOrLogErr(self: *AstParser, tt: scanning.TokenType, log: *ErrorLog) ?Token {
+    inline fn matchCurrentOrLogErrAndNull(self: *AstParser, tt: scanning.TokenType, log: *ErrorLog) ?Token {
         const currentOrNull = self.tryPeek();
         if (currentOrNull) |current| {
             if (current.tokenType != tt) {
@@ -142,15 +103,8 @@ pub const AstParser = struct {
     // The function mutates the state of the parser, moving the position forward
     // to the token immediately after the expression it returns.
     pub fn parseAndCompileAll(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
-        while (self.tryPeek()) |t| {
-            switch (t.tokenType) {
-                .leftBrace => _ = try self.blockRule(codegen, log),
-                .kwFun => try self.functionDeclarationRule(codegen, log),
-                else => {
-                    recordErrorTrace(log, ParsingError.GlobalScopeNoLongerUsable);
-                    _ = try self.statementRule(codegen, log);
-                },
-            }
+        while (self.tryPeek()) |_| {
+            try self.functionDeclarationRule(codegen, log);
         }
         // If there is no active function, this is a no-op.
         // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
@@ -158,13 +112,13 @@ pub const AstParser = struct {
     }
 
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
-        self.matchCurrentOrLogErr(.kwFun, log);
+        _ = self.matchCurrentOrLogErrAndNull(.kwFun, log);
         self.advance();
 
-        const funNameT = self.matchCurrentOrLogErr(.identifier, log);
+        const funNameTOrNull = self.matchCurrentOrLogErrAndNull(.identifier, log);
         self.advance();
 
-        self.matchCurrentOrLogErr(.leftParen, log);
+        _ = self.matchCurrentOrLogErrAndNull(.leftParen, log);
         self.advance();
 
         var args: [MAX_ARGS]bytecode.ArgInfo = undefined;
@@ -173,13 +127,13 @@ pub const AstParser = struct {
         const argStart = toi(self.tryPeek());
 
         if (argStart.tokenType != .rightParen) while (self.tryPeek()) |_| {
-            const arg_name = self.matchCurrentOrLogErr(.identifier, log) orelse break;
+            const arg_name = self.matchCurrentOrLogErrAndNull(.identifier, log) orelse break;
             self.advance();
             const typeDesignatorOrNull = self.tryPeek();
             if (typeDesignatorOrNull) |typeDesignator| {
                 switch (typeDesignator.tokenType) {
                     .comma => {
-                        recordErrorTrace(log, .argumentMustHaveType);
+                        log.push(.expectedTypeAnnotation);
                     },
 
                     .colon => {
@@ -192,24 +146,24 @@ pub const AstParser = struct {
                                     .tyNum => .number,
                                     .tyString => .string,
                                     .tyVoid => e: {
-                                        recordErrorTrace(log, .argumentTypeCannotBeVoid);
+                                        log.push(.argumentTypeCannotBeVoid);
                                         break :e .nil;
                                     },
                                     else => e: {
-                                        recordErrorTrace(log, .{ .expectedTypeToken = .{ .found = arg_type } });
+                                        log.push(.{ .expectedTypeToken = .{ .found = arg_type } });
                                         break :e .nil;
                                     },
                                 },
                                 .name = arg_name.source orelse unreachable,
                             };
                         } else {
-                            recordErrorTrace(log, .{ .expectedTypeToken = .{ .found = null } });
+                            log.push(.{ .expectedTypeToken = .{ .found = null } });
                         }
                         self.advance();
                     },
 
                     else => {
-                        recordErrorTrace(log, ParsingError.ExpectedType);
+                        log.push(.expectedTypeAnnotation);
                         break;
                     },
                 }
@@ -220,7 +174,7 @@ pub const AstParser = struct {
                 .rightParen => {
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                        recordErrorTrace(log, .argLimitExceeded);
+                        log.push(.argLimitExceeded);
                         break;
                     } else {
                         argCount += 1;
@@ -231,21 +185,21 @@ pub const AstParser = struct {
                     self.advance();
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                        recordErrorTrace(log, .argLimitExceeded);
+                        log.push(.argLimitExceeded);
                         break;
                     } else {
                         argCount += 1;
                     }
                 },
-                else => recordErrorTrace(log, .{ .expectedToken = .{ .expected = .comma, .found = continuation } }),
+                else => log.push(.{ .expectedToken = .{ .expected = .comma, .found = continuation } }),
             }
         };
 
-        self.matchCurrentOrLogErr(.rightParen, log);
+        _ = self.matchCurrentOrLogErrAndNull(.rightParen, log);
         self.advance();
 
-        const rt = self.tryPeek();
-        const retType: bytecode.Type = ret: switch (toi(rt).tokenType) {
+        const returnTypeTokenOrNull = self.tryPeek();
+        const retType: bytecode.Type = ret: switch (toi(returnTypeTokenOrNull).tokenType) {
             .tyBool => {
                 self.advance();
                 break :ret .bool;
@@ -267,25 +221,27 @@ pub const AstParser = struct {
             .leftBrace => break :ret .nil,
             else => {
                 self.advance();
-                recordErrorTrace(log, .{ .expectedTypeToken = .{ .found = rt } });
+                log.push(.{ .expectedTypeToken = .{ .found = returnTypeTokenOrNull } });
                 break :ret .nil;
             },
         };
-        const funName = funNameT.source orelse unreachable;
-        try codegen.enterFunction(log, funName, args[0..argCount], retType);
-        // Function body
-        _ = try self.blockRule(codegen, log);
-        try codegen.exitFunction(log);
+        if (funNameTOrNull) |funNameT| {
+            const funName = funNameT.source orelse unreachable;
+            try codegen.enterFunction(log, funName, args[0..argCount], retType);
+            // Function body
+            _ = try self.blockRule(codegen, log);
+            try codegen.exitFunction(log);
+        }
     }
 
-    fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!BlockReturnInfo {
-        self.matchCurrentOrLogErr(.leftBrace, log);
+    fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) Allocator.Error!BlockReturnInfo {
+        _ = self.matchCurrentOrLogErrAndNull(.leftBrace, log);
         self.advance();
 
         codegen.enterScope();
         const retInfo = try self.blockBodyRule(codegen, log);
 
-        self.matchCurrentOrLogErr(.rightBrace, log);
+        _ = self.matchCurrentOrLogErrAndNull(.rightBrace, log);
         try codegen.exitScope();
         self.advance();
         return retInfo;
@@ -305,20 +261,18 @@ pub const AstParser = struct {
     }
 
     fn statementRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !BlockReturnInfo {
-        const leadingToken;
         const blockRetInfo = try self.returnRule(codegen, log);
-        const end: Token = self.tryPeek();
-        if (end.tokenType != .semicolon) {
-            recordErrorTrace(log, ParsingError.ExpectedSemicolon);
-        } else {
+
+        const semicolonMatchOrNull = self.matchCurrentOrLogErrAndNull(.semicolon, log);
+        if (semicolonMatchOrNull != null) {
             self.advance();
         }
         return blockRetInfo;
     }
 
     fn returnRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !BlockReturnInfo {
-        const ret: Token = self.tryPeek();
-        if (ret.tokenType != .kwReturn) {
+        const ret = self.tryPeek();
+        if (toi(ret).tokenType != .kwReturn) {
             try self.declarationRule(codegen, log);
             return .{ .returnsOnAllPaths = false };
         }
@@ -328,79 +282,75 @@ pub const AstParser = struct {
     }
 
     fn declarationRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
-        const decl: Token = self.tryPeek();
-        if (decl.tokenType != .kwVar) {
+        const decl = self.tryPeek();
+        if (toi(decl).tokenType != .kwVar) {
             _ = try self.expressionRule(codegen, log);
             return;
         }
         self.advance();
-        const name: Token = self.tryPeek();
-        if (name.tokenType != .identifier) {
-            recordErrorTrace(log, ParsingError.ExpectedIdentifier);
-        }
+
+        const nameTokenOrNull = self.matchCurrentOrLogErrAndNull(.identifier, log);
 
         self.advance();
-        switch ((self.tryPeek() orelse token(.invalidChar)).tokenType) {
+        switch (toi(self.tryPeek()).tokenType) {
             .colon => {
                 self.advance();
 
-                const typeToken: Token = self.tryPeek();
-                const varType: bytecode.Type = switch (typeToken.tokenType) {
+                const typeToken = self.tryPeek();
+                const varType: bytecode.Type = switch (toi(typeToken).tokenType) {
                     .tyBool => .bool,
                     .tyNum => .number,
                     .tyString => .string,
                     .tyVoid => .nil,
-                    .identifier => e: {
-                        recordErrorTrace(log, ParsingError.CustomTypesNotYetSupported);
-                        break :e .nil;
-                    },
                     else => e: {
-                        recordErrorTrace(log, ParsingError.ExpectedType);
+                        log.push(.{ .expectedTypeToken = .{ .found = typeToken } });
                         break :e .nil;
                     },
                 };
 
                 self.advance();
 
-                const next: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+                const next = self.tryPeek();
                 const initialValue: ?Handle = val: {
-                    switch (next.tokenType) {
+                    switch (toi(next).tokenType) {
                         .semicolon => break :val null,
                         .equal => {
                             self.advance();
                             break :val try self.expressionRule(codegen, log);
                         },
                         else => {
-                            recordErrorTrace(log, ParsingError.ExpectedToken);
+                            log.push(.{ .expectedToken = .{ .expected = .semicolon, .found = next } });
                             break :val null;
                         },
                     }
                 };
-                _ = try codegen.registerVariable(log, name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .provided = .{ .type = varType, .initial = initialValue } });
-                return;
-            },
-            .semicolon => {
-                recordErrorTrace(log, ParsingError.ExpectedTypeAtVariableDeclaration);
+
+                if (nameTokenOrNull) |nameToken| {
+                    _ = try codegen.registerVariable(log, nameToken.source orelse unreachable, .{ .provided = .{ .type = varType, .initial = initialValue } });
+                }
                 return;
             },
             .equal => {
                 self.advance();
-                _ = try codegen.registerVariable(log, name.source orelse @constCast("NULLSFEPIRUPWUREWIP"), .{ .fromValue = try self.expressionRule(codegen, log) });
+                if (nameTokenOrNull) |nameToken| {
+                    _ = try codegen.registerVariable(log, nameToken.source orelse unreachable, .{ .fromValue = try self.expressionRule(codegen, log) });
+                }
                 return;
             },
+            // Includes semicolon.
             else => {
-                recordErrorTrace(log, ParsingError.ExpectedToken);
+                log.push(.expectedTypeAnnotation);
                 return;
             },
         }
     }
 
-    fn expressionRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !Handle {
+    fn expressionRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) Allocator.Error!Handle {
         return try self.orRule(codegen, log);
     }
 
     // might be the most atrocious function body i've ever written
-    fn binaryRule(self: *AstParser, log: *ErrorLog, codegen: *CodeGen, matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, *ErrorLog) ParseErrorSet!Handle) ParseErrorSet!Handle {
+    fn binaryRule(self: *AstParser, log: *ErrorLog, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (*AstParser, *CodeGen, *ErrorLog) Allocator.Error!Handle) !Handle {
         var expression = try previousRule(self, codegen, log);
         while (self.tryPeek()) |tok| {
             const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
@@ -438,9 +388,9 @@ pub const AstParser = struct {
         return self.binaryRule(log, codegen, matches, unaryRule);
     }
     fn unaryRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !Handle {
-        const opToken: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+        const opToken = self.tryPeek();
 
-        const operation: UnaryExprType = switch (opToken.tokenType) {
+        const operation: UnaryExprType = switch (toi(opToken).tokenType) {
             .bang => .negateBool,
             .minus => .negate,
             else => return try self.functionCallOrVariableOrAssignmentRule(codegen, log),
@@ -454,8 +404,8 @@ pub const AstParser = struct {
     }
 
     // Calls and variable usages both start with an identifier, so they're combined into one rule.
-    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!Handle {
-        const name: Token = self.tryPeek() orelse return self.primaryRule(codegen, log);
+    fn functionCallOrVariableOrAssignmentRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !Handle {
+        const name = self.tryPeek() orelse return self.primaryRule(codegen, log);
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.primaryRule(codegen, log);
         }
@@ -478,25 +428,16 @@ pub const AstParser = struct {
                     args[argNums] = try self.expressionRule(codegen, log);
                     argNums += 1;
 
-                    const seperator: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
-                    if (seperator.tokenType != .comma) {
-                        break;
-                    }
+                    _ = self.matchCurrentOrLogErrAndNull(.comma, log) orelse break;
+
                     if (argNums < MAX_ARGS) {
                         self.advance();
                     } else {
-                        recordErrorTrace(log, ParsingError.ArgLimit128);
+                        log.push(.argLimitExceeded);
                     }
                 }
 
-                const endParen: Token = self.tryPeek() orelse {
-                    log.push(ParsingError.ExpectedClosingBrace);
-                    return .ERR;
-                };
-                if (endParen.tokenType != .rightParen) {
-                    log.push(ParsingError.ExpectedClosingBrace);
-                    return .ERR;
-                }
+                _ = self.matchCurrentOrLogErrAndNull(.rightParen, log) orelse return .ERR;
                 self.advance();
                 return try codegen.callFunction(log, name.source orelse unreachable, args[0..argNums]);
             },
@@ -504,26 +445,24 @@ pub const AstParser = struct {
                 self.advance();
 
                 const item = try self.expressionRule(codegen, log);
-                return try codegen.updateVariable(log, name.source orelse @constCast("NULL NAME THIS IS A BUG PLEASE REPORT IT NOW!!"), item);
+                return try codegen.updateVariable(log, name.source orelse unreachable, item);
             },
             else => {
-                return codegen.getVariable(log, name.source orelse @constCast("uhhhhhhhhh this is awkward"));
+                return codegen.getVariable(log, name.source orelse unreachable);
             },
         }
     }
 
-    fn primaryRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) ParseErrorSet!Handle {
-        const tok: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
+    fn primaryRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !Handle {
+        const tok = toi(self.tryPeek());
 
         const result = switch (tok.tokenType) {
             .leftParen => grouping: {
+                self.advance();
                 const expr = try self.expressionRule(codegen, log);
 
-                // the token will be the token following expr
-                const current: Token = self.tryPeek() orelse .{ .tokenType = .invalidChar, .source = null };
-                if (current.tokenType != .rightParen) {
-                    recordErrorTrace(log, ParsingError.ExpectedClosingParen);
-                }
+                // current will be the token following expr
+                _ = self.matchCurrentOrLogErrAndNull(.rightParen, log);
                 self.advance();
                 break :grouping expr;
             },
@@ -535,7 +474,7 @@ pub const AstParser = struct {
             else => {
                 // Since this is the last rule checked, a rejection means there's no expression.
                 // If we're calling the expression rules, we definitely need one.
-                log.push(ParsingError.ExpectedExpression);
+                log.push(.expectedExpression);
                 return .ERR;
             },
         };

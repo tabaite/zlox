@@ -95,7 +95,7 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter, astAlloc);
+            var astParser = parsing.AstParser.new(&iter);
 
             var errLog = try ErrorLog.init(astAlloc, &iter);
             try astParser.parseAndCompileAll(&codegen, &errLog);
@@ -118,7 +118,7 @@ pub fn main() !void {
             const astAlloc = arena.allocator();
 
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter, astAlloc);
+            var astParser = parsing.AstParser.new(&iter);
 
             _ = try stderr.write("\nbytecode:\n");
 
@@ -133,20 +133,21 @@ pub fn main() !void {
                 return;
             }
 
-            const program = try codegen.finalize();
+            const programOrNull = codegen.finalize(&errLog);
+            if (programOrNull) |program| {
+                try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
+                for (program.instructions) |ins| {
+                    try bytecode.printInstruction(ins, stderrAny);
+                }
 
-            try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
-            for (program.instructions) |ins| {
-                try bytecode.printInstruction(ins, stderrAny);
-            }
+                _ = try stderr.write("\nevaluating\n");
+                var rt = try runtime.Runtime.init(astAlloc, gpa);
+                defer rt.deinit(astAlloc);
+                rt.run(program);
 
-            _ = try stderr.write("\nevaluating\n");
-            var rt = try runtime.Runtime.init(astAlloc, gpa);
-            defer rt.deinit(astAlloc);
-            rt.run(program);
-
-            if (rt.variableStack.used > 2) {
-                try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
+                if (rt.variableStack.used > 2) {
+                    try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
+                }
             }
         },
         .unknown => {
@@ -156,29 +157,11 @@ pub fn main() !void {
 }
 
 fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
-    const Error = lib.common.CompileError;
+    // TODO: print detailed information bundled in the union
     const message = switch (trace.err) {
-        Error.ExpectedSemicolon => "expected semicolon",
-        Error.ExpectedOpeningBrace => "expected opening brace",
-        Error.ExpectedClosingBrace => "expected closing brace",
-        Error.ExpectedOpeningParen => "expected opening parenthesis",
-        Error.ExpectedClosingParen => "expected closing parenthesis",
-        Error.ArgLimit128 => "you can't have more arguments sorryhave you tried like a di framework or something\n",
-        Error.ArgumentCannotBeTypeVoid => "argument cannot have type \"void\"",
-        Error.ExpectedToken => "expected a token",
-        Error.ExpectedExpression => "expected a valid expression",
-        Error.ExpectedKwFun => "expected the keyword \"fun\"",
-        Error.ExpectedComma => "expected a comma",
-        Error.ExpectedIdentifier => "expected a name",
-        Error.UnexpectedToken => "unexpected token!",
-        Error.ExpectedTypeAtVariableDeclaration => "expected a type at this variable declaration (either inferred from initial value or explicitly provided)",
-        Error.GlobalScopeNoLongerUsable => "you can't put statements in global scope anymore :) (put it in main() pls) (global variable declarations will be supported soon i promise)",
-        Error.VariableNotDeclared => "this variable doesn't exist in this scope!",
-        Error.VariableAlreadyDeclared => "a variable with the same name has already been declared in this scope",
-        Error.MainFunctionCannotHaveArgs => "main function cannot have arguments",
-        Error.MainFunctionCannotReturnValue => "main function cannot return anything",
-        Error.IncompatibleType => "operation types are not compatible",
-        else => return trace.err,
+        .illegalToken => |_| "illegal token",
+        .expectedToken => |_| "expected token",
+        else => "idk",
     };
 
     try out.print("error: {s}\nline {d}: \x1b[31;1m{s}\x1b[0m\n\n", .{ message, trace.lineNum, trace.line });

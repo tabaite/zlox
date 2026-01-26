@@ -46,10 +46,24 @@ pub const Error = union(enum) {
         found: ?Token,
     },
 
+    /// A specialized version of expectedToken
+    /// for type annotations (which are multiple tokens)
+    /// The "found" attribute is not really relevant since
+    /// type annotations are only expected at argument/variable declarations.
+    /// var h;
+    /// -----^ expected type annotation
+    /// fun foo(a, b: bool) void {};
+    /// --------^ expected type annotation
+    expectedTypeAnnotation,
+    /// A specialized version of expectedToken for
+    /// when we want an expression but don't get one.
+    /// var x = ;
+    /// -------^ expected expression
+    expectedExpression,
+
     // COMPILE ERRORS
     argLimitExceeded,
 
-    argumentMustHaveType,
     argumentTypeCannotBeVoid,
     argumentTypeIncorrect: struct {
         found: Type,
@@ -67,6 +81,36 @@ pub const Error = union(enum) {
         lhsType: Type,
         rhsType: Type,
     },
+    incompatibleTypeInitialValue: struct {
+        expectedType: Type,
+        foundType: Type,
+    },
+
+    mainFunctionNotDeclared,
+    mainFunctionCannotHaveReturnType: struct {
+        foundType: Type,
+    },
+    mainFunctionCannotHaveArguments: struct { numArgsFound: u16 },
+
+    incompatibleTypeReturn: struct {
+        expectedType: Type,
+        foundType: Type,
+    },
+
+    incompatibleTypeArgument: struct {
+        expectedType: Type,
+        foundType: Type,
+    },
+    incorrectNumberOfArguments: struct {
+        // Currently MAX_ARGS is 128.
+        // It's very unlikely it will exceed 65536.
+        numFound: u16,
+        numExpected: u16,
+    },
+
+    /// When a variable is declared without a type annotation
+    /// AND the type cannot be inferred from an initial value.
+    variableMustHaveTypeWhenDefined,
 
     // Referencing something that does
     // not exist.
@@ -74,16 +118,16 @@ pub const Error = union(enum) {
     // var rad = 5;
     // var area = pi * rad * rad;
     // -----------^ pi not defined
-    variableNotDefined,
-    functionNotDefined,
+    variableNotDefined: struct { name: []u8 },
+    functionNotDefined: struct { name: []u8 },
     // Defining a new var/function with
     // the same name as an existing function.
     // Example:
     // var rad = 5;
     // var rad = 15;
     // -----------^ rad already defined
-    variableAlreadyDefined,
-    functionAlreadyDefined,
+    variableAlreadyDefined: struct { name: []u8 },
+    functionAlreadyDefined: struct { name: []u8 },
 };
 
 pub const ErrorTrace = struct {
