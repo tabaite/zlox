@@ -95,7 +95,7 @@ pub const AstParser = struct {
         } else {
             log.push(.{ .expectedToken = .{ .expected = tt, .found = null } });
         }
-        return currentOrNull;
+        return null;
     }
 
     // The way this AST parser works is somewhat simple.
