@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
-const common = @import("common.zig");
+const errors = @import("errors.zig");
 const Allocator = std.mem.Allocator;
 
 pub const RuntimeError = error{
@@ -31,9 +31,9 @@ test "push varstack" {
 const Call = struct { returnPosition: usize, varStackHeight: usize };
 
 // The usize counts how high the stack is in terms of variables (ABSOLUTE POSITION).
-pub const CallStack = common.Stack(Call, 16777215);
-pub const VarStack = common.Stack(Operand, 16777215);
-pub const ArgBuffer = common.Stack(Operand, 128);
+pub const CallStack = errors.Stack(Call, 16777215);
+pub const VarStack = errors.Stack(Operand, 16777215);
+pub const ArgBuffer = errors.Stack(Operand, 128);
 
 pub const Runtime = struct {
     stringAllocator: Allocator,

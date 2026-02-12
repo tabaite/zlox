@@ -8,7 +8,7 @@ const scanning = lib.scanning;
 const parsing = lib.parsing;
 const runtime = lib.runtime;
 const bytecode = lib.bytecode;
-const ErrorLog = lib.common.ErrorLog;
+const ErrorLog = lib.errors.ErrorLog;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -66,6 +66,12 @@ pub fn main() !void {
 
     var iter = scanning.TokenIterator.init(contents);
 
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const astAlloc = arena.allocator();
+
+    var errLog = try ErrorLog.init(astAlloc, &iter);
+
     const stderrAny = stderr.any();
 
     switch (operation) {
@@ -73,31 +79,24 @@ pub fn main() !void {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
             defer tokens.deinit();
 
-            while (iter.next()) |token| {
+            while (iter.next(&errLog)) |token| {
                 if (token.tokenType == .invalidChar) {
-                    try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, token.source orelse "NULL???" });
-                } else if (token.tokenType == .unterminatedString) {
-                    _ = try stderr.write("unterminated string (FIX THIS ERROR MESSAGE)\n");
+                    try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, iter.exchangeTokenForSource(token) });
                 } else {
                     try tokens.append(token);
                 }
             }
 
             for (tokens.items) |t| {
-                try scanning.printToken(t, stderr.any());
+                try scanning.printToken(&iter, t, stderr.any());
             }
             _ = try stderr.write("EOF  null\n");
         },
         .parse => {
             // an expression can never be less than 1 token
-            var arena = std.heap.ArenaAllocator.init(gpa);
-            defer arena.deinit();
-            const astAlloc = arena.allocator();
-
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter);
+            var astParser = parsing.AstParser.new(&iter, &errLog);
 
-            var errLog = try ErrorLog.init(astAlloc, &iter);
             try astParser.parseAndCompileAll(&codegen, &errLog);
 
             const errs = errLog.recover();
@@ -113,16 +112,11 @@ pub fn main() !void {
             }
         },
         .evaluate => {
-            var arena = std.heap.ArenaAllocator.init(gpa);
-            defer arena.deinit();
-            const astAlloc = arena.allocator();
-
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter);
+            var astParser = parsing.AstParser.new(&iter, &errLog);
 
             _ = try stderr.write("\nbytecode:\n");
 
-            var errLog = try ErrorLog.init(astAlloc, &iter);
             try astParser.parseAndCompileAll(&codegen, &errLog);
 
             const errs = errLog.recover();

@@ -1,7 +1,7 @@
 const std = @import("std");
 // circular imports are allowed!!!
 const parsing = @import("parsing.zig");
-const common = @import("common.zig");
+const errors = @import("errors.zig");
 const Allocator = std.mem.Allocator;
 
 pub const MAX_ARGS = 128;
@@ -151,8 +151,8 @@ const ScopeExtent = struct {
     numVars: usize = 0,
     numItems: usize = 0,
 };
-const ScopeExtentStack = common.Stack(ScopeExtent, 32767);
-const ScopeNamesStack = common.Stack([]u8, 32767);
+const ScopeExtentStack = errors.Stack(ScopeExtent, 32767);
+const ScopeNamesStack = errors.Stack([]u8, 32767);
 
 const CurrentFunctionContext = struct {
     name: []u8,
@@ -162,7 +162,7 @@ const CurrentFunctionContext = struct {
     returnsOnAllPaths: bool,
 };
 
-const ErrorLog = common.ErrorLog;
+const ErrorLog = errors.ErrorLog;
 
 pub const BytecodeGenerator = struct {
     const FunctionType = struct {

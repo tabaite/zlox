@@ -1,19 +1,19 @@
 const scanning = @import("scanning.zig");
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
-const common = @import("common.zig");
+const errors = @import("errors.zig");
 
 const MAX_ARGS = bytecode.MAX_ARGS;
 const Token = scanning.Token;
 const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
-const ErrorLog = common.ErrorLog;
-pub const ErrorTrace = common.ErrorTrace;
+const ErrorLog = errors.ErrorLog;
+pub const ErrorTrace = errors.ErrorTrace;
 
 const Handle = bytecode.HandledOperand;
 
-const Error = common.Error;
+const Error = errors.Error;
 
 pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
 
@@ -65,15 +65,15 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
 
 /// Token or Invalid
 inline fn toi(t: ?Token) Token {
-    return t orelse .{ .source = null, .tokenType = .invalidChar };
+    return t orelse .{ .sourceStart = 0, .sourceEndExclusive = 0, .tokenType = .invalidChar };
 }
 
 pub const AstParser = struct {
     iter: *scanning.TokenIterator,
     lastToken: ?Token,
 
-    pub fn new(iter: *scanning.TokenIterator) AstParser {
-        return .{ .iter = iter, .lastToken = iter.next() };
+    pub fn new(iter: *scanning.TokenIterator, log: *ErrorLog) AstParser {
+        return .{ .iter = iter, .lastToken = iter.next(log) };
     }
 
     // Tries to peek at the token at the position of our parser. Returns null if we are at the end of the list.
@@ -81,8 +81,8 @@ pub const AstParser = struct {
         return self.lastToken;
     }
 
-    inline fn advance(self: *AstParser) void {
-        self.lastToken = self.iter.next();
+    inline fn advance(self: *AstParser, log: *ErrorLog) void {
+        self.lastToken = self.iter.next(log);
     }
 
     inline fn matchCurrentOrLogErrAndNull(self: *AstParser, tt: scanning.TokenType, log: *ErrorLog) ?Token {
@@ -113,13 +113,13 @@ pub const AstParser = struct {
 
     fn functionDeclarationRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) !void {
         _ = self.matchCurrentOrLogErrAndNull(.kwFun, log);
-        self.advance();
+        self.advance(log);
 
         const funNameTOrNull = self.matchCurrentOrLogErrAndNull(.identifier, log);
-        self.advance();
+        self.advance(log);
 
         _ = self.matchCurrentOrLogErrAndNull(.leftParen, log);
-        self.advance();
+        self.advance(log);
 
         var args: [MAX_ARGS]bytecode.ArgInfo = undefined;
         var argCount: usize = 0;
@@ -128,7 +128,7 @@ pub const AstParser = struct {
 
         if (argStart.tokenType != .rightParen) while (self.tryPeek()) |_| {
             const arg_name = self.matchCurrentOrLogErrAndNull(.identifier, log) orelse break;
-            self.advance();
+            self.advance(log);
             const typeDesignatorOrNull = self.tryPeek();
             if (typeDesignatorOrNull) |typeDesignator| {
                 switch (typeDesignator.tokenType) {
@@ -137,7 +137,7 @@ pub const AstParser = struct {
                     },
 
                     .colon => {
-                        self.advance();
+                        self.advance(log);
                         const arg_type_or_null = self.tryPeek();
                         if (arg_type_or_null) |arg_type| {
                             args[argCount] = .{
@@ -154,12 +154,12 @@ pub const AstParser = struct {
                                         break :e .nil;
                                     },
                                 },
-                                .name = arg_name.source orelse unreachable,
+                                .name = self.iter.exchangeTokenForSource(arg_name),
                             };
                         } else {
                             log.push(.{ .expectedTypeToken = .{ .found = null } });
                         }
-                        self.advance();
+                        self.advance(log);
                     },
 
                     else => {
@@ -182,7 +182,7 @@ pub const AstParser = struct {
                     break;
                 },
                 .comma => {
-                    self.advance();
+                    self.advance(log);
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         log.push(.argLimitExceeded);
@@ -196,37 +196,37 @@ pub const AstParser = struct {
         };
 
         _ = self.matchCurrentOrLogErrAndNull(.rightParen, log);
-        self.advance();
+        self.advance(log);
 
         const returnTypeTokenOrNull = self.tryPeek();
         const retType: bytecode.Type = ret: switch (toi(returnTypeTokenOrNull).tokenType) {
             .tyBool => {
-                self.advance();
+                self.advance(log);
                 break :ret .bool;
             },
             .tyNum => {
-                self.advance();
+                self.advance(log);
                 break :ret .number;
             },
             .tyString => {
-                self.advance();
+                self.advance(log);
                 break :ret .string;
             },
             .tyVoid => {
-                self.advance();
+                self.advance(log);
                 break :ret .nil;
             },
             // Start of function body. We assume this means void.
             //         v
             .leftBrace => break :ret .nil,
             else => {
-                self.advance();
+                self.advance(log);
                 log.push(.{ .expectedTypeToken = .{ .found = returnTypeTokenOrNull } });
                 break :ret .nil;
             },
         };
         if (funNameTOrNull) |funNameT| {
-            const funName = funNameT.source orelse unreachable;
+            const funName = self.iter.exchangeTokenForSource(funNameT);
             try codegen.enterFunction(log, funName, args[0..argCount], retType);
             // Function body
             _ = try self.blockRule(codegen, log);
@@ -236,14 +236,14 @@ pub const AstParser = struct {
 
     fn blockRule(self: *AstParser, codegen: *CodeGen, log: *ErrorLog) Allocator.Error!BlockReturnInfo {
         _ = self.matchCurrentOrLogErrAndNull(.leftBrace, log);
-        self.advance();
+        self.advance(log);
 
         codegen.enterScope();
         const retInfo = try self.blockBodyRule(codegen, log);
 
         _ = self.matchCurrentOrLogErrAndNull(.rightBrace, log);
         try codegen.exitScope();
-        self.advance();
+        self.advance(log);
         return retInfo;
     }
 
@@ -265,7 +265,7 @@ pub const AstParser = struct {
 
         const semicolonMatchOrNull = self.matchCurrentOrLogErrAndNull(.semicolon, log);
         if (semicolonMatchOrNull != null) {
-            self.advance();
+            self.advance(log);
         }
         return blockRetInfo;
     }
@@ -276,7 +276,7 @@ pub const AstParser = struct {
             try self.declarationRule(codegen, log);
             return .{ .returnsOnAllPaths = false };
         }
-        self.advance();
+        self.advance(log);
         try codegen.insertFunctionReturn(log, try self.expressionRule(codegen, log));
         return .{ .returnsOnAllPaths = true };
     }
@@ -287,14 +287,14 @@ pub const AstParser = struct {
             _ = try self.expressionRule(codegen, log);
             return;
         }
-        self.advance();
+        self.advance(log);
 
         const nameTokenOrNull = self.matchCurrentOrLogErrAndNull(.identifier, log);
 
-        self.advance();
+        self.advance(log);
         switch (toi(self.tryPeek()).tokenType) {
             .colon => {
-                self.advance();
+                self.advance(log);
 
                 const typeToken = self.tryPeek();
                 const varType: bytecode.Type = switch (toi(typeToken).tokenType) {
@@ -308,14 +308,14 @@ pub const AstParser = struct {
                     },
                 };
 
-                self.advance();
+                self.advance(log);
 
                 const next = self.tryPeek();
                 const initialValue: ?Handle = val: {
                     switch (toi(next).tokenType) {
                         .semicolon => break :val null,
                         .equal => {
-                            self.advance();
+                            self.advance(log);
                             break :val try self.expressionRule(codegen, log);
                         },
                         else => {
@@ -326,14 +326,14 @@ pub const AstParser = struct {
                 };
 
                 if (nameTokenOrNull) |nameToken| {
-                    _ = try codegen.registerVariable(log, nameToken.source orelse unreachable, .{ .provided = .{ .type = varType, .initial = initialValue } });
+                    _ = try codegen.registerVariable(log, self.iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
                 }
                 return;
             },
             .equal => {
-                self.advance();
+                self.advance(log);
                 if (nameTokenOrNull) |nameToken| {
-                    _ = try codegen.registerVariable(log, nameToken.source orelse unreachable, .{ .fromValue = try self.expressionRule(codegen, log) });
+                    _ = try codegen.registerVariable(log, self.iter.exchangeTokenForSource(nameToken), .{ .fromValue = try self.expressionRule(codegen, log) });
                 }
                 return;
             },
@@ -355,7 +355,7 @@ pub const AstParser = struct {
         while (self.tryPeek()) |tok| {
             const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
 
-            self.advance();
+            self.advance(log);
 
             const right = try previousRule(self, codegen, log);
 
@@ -396,7 +396,7 @@ pub const AstParser = struct {
             else => return try self.functionCallOrVariableOrAssignmentRule(codegen, log),
         };
 
-        self.advance();
+        self.advance(log);
 
         const right = try self.unaryRule(codegen, log);
 
@@ -409,14 +409,14 @@ pub const AstParser = struct {
         if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
             return self.primaryRule(codegen, log);
         }
-        self.advance();
+        self.advance(log);
         const startParen = self.tryPeek() orelse {
             return Handle.NIL;
         };
 
         switch (startParen.tokenType) {
             .leftParen => {
-                self.advance();
+                self.advance(log);
 
                 var args: [MAX_ARGS]Handle = undefined;
                 var argNums: usize = 0;
@@ -431,24 +431,24 @@ pub const AstParser = struct {
                     _ = self.matchCurrentOrLogErrAndNull(.comma, log) orelse break;
 
                     if (argNums < MAX_ARGS) {
-                        self.advance();
+                        self.advance(log);
                     } else {
                         log.push(.argLimitExceeded);
                     }
                 }
 
                 _ = self.matchCurrentOrLogErrAndNull(.rightParen, log) orelse return .ERR;
-                self.advance();
-                return try codegen.callFunction(log, name.source orelse unreachable, args[0..argNums]);
+                self.advance(log);
+                return try codegen.callFunction(log, self.iter.exchangeTokenForSource(name), args[0..argNums]);
             },
             .equal => {
-                self.advance();
+                self.advance(log);
 
                 const item = try self.expressionRule(codegen, log);
-                return try codegen.updateVariable(log, name.source orelse unreachable, item);
+                return try codegen.updateVariable(log, self.iter.exchangeTokenForSource(name), item);
             },
             else => {
-                return codegen.getVariable(log, name.source orelse unreachable);
+                return codegen.getVariable(log, self.iter.exchangeTokenForSource(name));
             },
         }
     }
@@ -458,16 +458,16 @@ pub const AstParser = struct {
 
         const result = switch (tok.tokenType) {
             .leftParen => grouping: {
-                self.advance();
+                self.advance(log);
                 const expr = try self.expressionRule(codegen, log);
 
                 // current will be the token following expr
                 _ = self.matchCurrentOrLogErrAndNull(.rightParen, log);
-                self.advance();
+                self.advance(log);
                 break :grouping expr;
             },
-            .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, tok.source orelse unreachable) catch 0),
-            .string => try codegen.newStringLit(tok.source orelse unreachable),
+            .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, self.iter.exchangeTokenForSource(tok)) catch 0),
+            .string => try codegen.newStringLit(self.iter.exchangeTokenForSource(tok)),
             .kwNil => CodeGen.newNilLit(),
             .kwTrue => comptime CodeGen.newBoolLit(true),
             .kwFalse => comptime CodeGen.newBoolLit(false),
@@ -478,7 +478,7 @@ pub const AstParser = struct {
                 return .ERR;
             },
         };
-        self.advance();
+        self.advance(log);
         return result;
     }
 };

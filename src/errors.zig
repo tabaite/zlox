@@ -23,6 +23,10 @@ pub const Error = union(enum) {
         // i promise we will eventually have utf-8 support
         token: []u8,
     },
+    /// Example:
+    /// var a = " EOF
+    /// ----------^ close your string
+    unterminatedString,
 
     // PARSING ERRORS
     /// Parsing errors where one token was expected,

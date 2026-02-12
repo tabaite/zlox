@@ -1,12 +1,11 @@
+const errors = @import("errors.zig");
+const ErrorLog = errors.ErrorLog;
+
 const std = @import("std");
 const testing = std.testing;
 
 pub const TokenType = enum {
-    // Invalid tokens can be handled however we want.
-    // However, it is not really in the best interest
-    // of the user to stop after only 1 invalid has been found.
-
-    unterminatedString,
+    // workaround since we don't have Option<T>
     invalidChar,
 
     leftParen,
@@ -87,63 +86,69 @@ pub const keywordMap = std.StaticStringMap(TokenType).initComptime(.{
 pub const Token = struct {
     tokenType: TokenType,
 
-    // Subslice of the source buffer. no, the nullable slice does NOT affect the size
-    source: ?[]u8,
+    // Subslice of the source buffer.
+    /// Start (inclusive).
+    sourceStart: u32,
+    /// End (exclusive).
+    sourceEndExclusive: u32,
 };
 
 pub const TokenIterator = struct {
     source: []u8,
     position: usize = 0,
     lineNumber: u32 = 1,
+
+    pub fn exchangeTokenForSource(self: *TokenIterator, token: Token) []u8 {
+        return self.source[token.sourceStart..token.sourceEndExclusive];
+    }
+
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
 
-    // I hate the usage of *unexpected_char, but whatever.
-    // TODO: Remove unexpected_char. Information about the scanning errors (unexpected, unterminated string)
-    // should be manually recovered, if desirable.
-    pub fn next(self: *TokenIterator) ?Token {
+    pub fn next(self: *TokenIterator, log: *ErrorLog) ?Token {
         var i = self.position;
 
         while (i < self.source.len) {
             const current = self.source[i];
             if (isAlpha(current)) {
-                for (i..self.source.len) |j| {
-                    const icurrent = self.source[j];
+                var end = i;
+                while (end < self.source.len) {
+                    const icurrent = self.source[end];
                     if (!isAlphaNumeric(icurrent)) {
-                        self.position = j;
-                        const kwLookup = keywordMap.get(self.source[i..j]);
-                        const idenType = kwLookup orelse .identifier;
-                        const source = if (kwLookup == null) self.source[i..j] else null;
-                        return .{ .tokenType = idenType, .source = source };
+                        break;
                     }
+
+                    end += 1;
                 }
-                const kwLookup = keywordMap.get(self.source[i..self.source.len]);
+                self.position = end;
+                const kwLookup = keywordMap.get(self.source[i..end]);
                 const idenType = kwLookup orelse .identifier;
-                const source = if (kwLookup == null) self.source[i..self.source.len] else null;
-                return .{ .tokenType = idenType, .source = source };
+                return .{ .tokenType = idenType, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(end) };
             }
 
             if (isNumeric(current)) {
                 var seenDecimal = false;
-                for (i..self.source.len) |j| {
-                    const icurrent = self.source[j];
+                var end = i;
+                while (end < self.source.len) {
+                    const icurrent = self.source[end];
                     if (icurrent == '.') {
                         if (seenDecimal) {
-                            return .{ .tokenType = .number, .source = self.source[i..j] };
+                            break;
                         }
-                        if ((j + 1 >= self.source.len) or !isNumeric(self.source[j + 1])) {
-                            self.position = j;
-                            return .{ .tokenType = .number, .source = self.source[i..j] };
+                        // the next one must be a number for the decimal to be valid
+                        if ((end + 1 >= self.source.len) or !isNumeric(self.source[end + 1])) {
+                            break;
                         }
                         seenDecimal = true;
                     } else if (!isNumeric(icurrent)) {
-                        self.position = j;
-                        return .{ .tokenType = .number, .source = self.source[i..j] };
+                        break;
                     }
+
+                    end += 1;
                 }
-                self.position = self.source.len;
-                return .{ .tokenType = .number, .source = self.source[i..self.source.len] };
+                self.position = end;
+                return .{ .tokenType = .number, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(self.source.len) };
             }
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
@@ -166,7 +171,7 @@ pub const TokenIterator = struct {
                         i = self.source.len;
                     } else {
                         self.position = i + 1;
-                        return .{ .tokenType = .slash, .source = null };
+                        return .{ .tokenType = .slash, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                     }
                 },
 
@@ -180,82 +185,89 @@ pub const TokenIterator = struct {
                         }
                         if (sscurrent == '"') {
                             self.position = j + 1;
-                            return .{ .tokenType = .string, .source = self.source[start..j] };
+                            return .{ .tokenType = .string, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(j) };
                         }
                     }
-                    return .{ .tokenType = .unterminatedString, .source = self.source[start..self.source.len] };
+                    // error but we'll get there
+                    log.push(.unterminatedString);
+                    return .{ .tokenType = .string, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(self.source.len) };
                 },
 
                 // one character tokens
                 '(' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .leftParen, .source = null };
+                    return .{ .tokenType = .leftParen, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 ')' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .rightParen, .source = null };
+                    return .{ .tokenType = .rightParen, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '{' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .leftBrace, .source = null };
+                    return .{ .tokenType = .leftBrace, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '}' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .rightBrace, .source = null };
+                    return .{ .tokenType = .rightBrace, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 ',' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .comma, .source = null };
+                    return .{ .tokenType = .comma, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '.' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .dot, .source = null };
+                    return .{ .tokenType = .dot, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '-' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .minus, .source = null };
+                    return .{ .tokenType = .minus, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '+' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .plus, .source = null };
+                    return .{ .tokenType = .plus, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 ';' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .semicolon, .source = null };
+                    return .{ .tokenType = .semicolon, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '*' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .star, .source = null };
+                    return .{ .tokenType = .star, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 '%' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .percent, .source = null };
+                    return .{ .tokenType = .percent, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
                 ':' => {
                     self.position = i + 1;
-                    return .{ .tokenType = .colon, .source = null };
+                    return .{ .tokenType = .colon, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
 
                 // one/two character tokens
                 '<' => {
-                    self.position = if (cnext != '=' and cnext != '<') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext == '=') .lessEqual else if (cnext == '<') .leftShift else .less, .source = null };
+                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    self.position = i + offset;
+                    return .{ .tokenType = if (cnext == '=') .lessEqual else .less, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '>' => {
-                    self.position = if (cnext != '=' and cnext != '>') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext == '=') .greaterEqual else if (cnext == '>') .rightShift else .greater, .source = null };
+                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    self.position = i + offset;
+                    return .{ .tokenType = if (cnext == '=') .greaterEqual else .greater, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '!' => {
-                    self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext != '=') .bang else .bangEqual, .source = null };
+                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    self.position = i + offset;
+                    return .{ .tokenType = if (cnext != '=') .bang else .bangEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '=' => {
-                    self.position = if (cnext != '=') i + 1 else i + 2;
-                    return .{ .tokenType = if (cnext != '=') .equal else .equalEqual, .source = null };
+                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    self.position = i + offset;
+                    return .{ .tokenType = if (cnext != '=') .equal else .equalEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 else => {
                     self.position = i + 1;
-                    return .{ .tokenType = .invalidChar, .source = self.source[i .. i + 1] };
+                    log.push(.{ .illegalToken = .{ .token = self.source[i .. i + 1] } });
+                    return .{ .tokenType = .invalidChar, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
                 },
             }
 
@@ -281,7 +293,7 @@ fn isAlphaNumeric(char: u8) bool {
     return isAlpha(char) or isNumeric(char);
 }
 
-pub fn printToken(token: Token, out: std.io.AnyWriter) !void {
+pub fn printToken(iter: *TokenIterator, token: Token, out: std.io.AnyWriter) !void {
     _ = switch (token.tokenType) {
         .bang => try out.write("BANG ! null\n"),
         .bangEqual => try out.write("BANG_EQUAL != null\n"),
@@ -328,15 +340,15 @@ pub fn printToken(token: Token, out: std.io.AnyWriter) !void {
         .tyVoid => try out.write("TYPE void null\n"),
 
         .number => {
-            const str = token.source orelse "";
+            const str = iter.exchangeTokenForSource(token);
             try out.print("NUMBER {s} <NUMBER>\n", .{str});
         },
         .string => {
-            const str = token.source orelse "";
+            const str = iter.exchangeTokenForSource(token);
             try out.print("STRING \"{s}\" {s}\n", .{ str, str });
         },
         .identifier => {
-            const str = token.source orelse "";
+            const str = iter.exchangeTokenForSource(token);
             try out.print("IDENTIFIER {s} null\n", .{str});
         },
         else => unreachable,
