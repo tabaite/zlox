@@ -8,7 +8,9 @@ const scanning = lib.scanning;
 const parsing = lib.parsing;
 const runtime = lib.runtime;
 const bytecode = lib.bytecode;
-const ErrorLog = lib.errors.ErrorLog;
+const errors = lib.errors;
+const ErrorLog = errors.ErrorLog;
+const ErrorTrace = errors.ErrorTrace;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -62,6 +64,13 @@ pub fn main() !void {
         const reader = file.reader();
         break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
     };
+
+    const stderrAny = stderr.any();
+    const u32Max = std.math.maxInt(u32);
+    if (contents.len > u32Max) {
+        try stderrAny.print("file is too large: maximum permissible file size is {d} bytes, file is {d} bytes", .{ u32Max, contents.len });
+    }
+
     defer gpa.free(contents);
 
     var iter = scanning.TokenIterator.init(contents);
@@ -71,8 +80,6 @@ pub fn main() !void {
     const astAlloc = arena.allocator();
 
     var errLog = try ErrorLog.init(astAlloc, &iter);
-
-    const stderrAny = stderr.any();
 
     switch (operation) {
         .tokenize => {
@@ -102,7 +109,7 @@ pub fn main() !void {
             const errs = errLog.recover();
             if (errs != null) {
                 for (errs.?) |trace| {
-                    try handleParseError(trace, stderrAny);
+                    try handleErrorTrace(trace, &iter, stderrAny);
                 }
                 return;
             }
@@ -122,7 +129,7 @@ pub fn main() !void {
             const errs = errLog.recover();
             if (errs != null) {
                 for (errs.?) |trace| {
-                    try handleParseError(trace, stderrAny);
+                    try handleErrorTrace(trace, &iter, stderrAny);
                 }
                 return;
             }
@@ -150,13 +157,18 @@ pub fn main() !void {
     }
 }
 
-fn handleParseError(trace: parsing.ErrorTrace, out: std.io.AnyWriter) !void {
-    // TODO: print detailed information bundled in the union
-    const message = switch (trace.err) {
-        .illegalToken => |_| "illegal token",
-        .expectedToken => |_| "expected token",
-        else => "idk",
-    };
-
-    try out.print("error: {s}\nline {d}: \x1b[31;1m{s}\x1b[0m\n\n", .{ message, trace.lineNum, trace.line });
+fn handleErrorTrace(trace: ErrorTrace, context: *scanning.TokenIterator, out: std.io.AnyWriter) !void {
+    try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ trace.lineNum, trace.line });
+    switch (trace.err) {
+        .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
+        .expectedToken => |e| {
+            if (e.found) |found| {
+                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), context.exchangeTokenForSource(found) });
+            } else {
+                try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
+            }
+        },
+        else => _ = try out.write("man idk"),
+    }
+    try out.writeByteNTimes('\n', 2);
 }

@@ -137,7 +137,9 @@ pub const Error = union(enum) {
 pub const ErrorTrace = struct {
     err: Error,
     lineNum: u32,
-    line: []u8,
+
+    lineStart: u32,
+    lineEndExclusive: u32,
 };
 
 pub const ErrorLog = struct {
@@ -156,20 +158,20 @@ pub const ErrorLog = struct {
     }
 
     pub fn push(self: *ErrorLog, err: Error) void {
-        var start: usize = 0;
-        var end = self.context.source.len;
+        var start: u32 = 0;
+        var end: u32 = @truncate(self.context.source.len);
 
         const pos = self.context.position;
         for (0..pos) |i| {
             const idx = pos - i - 1;
             if (self.context.source[idx] == '\n') {
-                start = idx;
+                start = @truncate(i);
                 break;
             }
         }
         for (pos..self.context.source.len) |i| {
             if (self.context.source[i] == '\n') {
-                end = i;
+                end = @truncate(i);
                 break;
             }
         }

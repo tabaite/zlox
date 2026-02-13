@@ -58,6 +58,60 @@ pub const TokenType = enum {
     tyBool,
     tyString,
     tyVoid,
+
+    pub fn typeAsString(self: TokenType) []const u8 {
+        return switch (self) {
+            .invalidChar => "INVALID",
+            .leftParen => "left parenthesis",
+            .rightParen => "right parenthesis",
+            .leftBrace => "left brace",
+            .rightBrace => "right brace",
+            .comma => "comma",
+            .dot => "dot",
+            .minus => "dash",
+            .plus => "plus",
+            .semicolon => "semicolon",
+            .colon => "colon",
+            .slash => "slash",
+            .star => "star",
+            .percent => "percent",
+            .bang => "bang",
+            .bangEqual => "bang-equal",
+            .equal => "equal",
+            .equalEqual => "equal-equal",
+            .greater => "greater",
+            .greaterEqual => "greater-equal",
+            .rightShift => "right-shift",
+            .less => "less",
+            .lessEqual => "less-equal",
+            .leftShift => "left-shift",
+            .identifier => "identifier",
+            .string => "string literal",
+            .number => "number literal",
+
+            .kwAnd => "keyword \"and\"",
+            .kwClass => "keyword \"class\"",
+            .kwElse => "keyword \"else\"",
+            .kwFalse => "keyword \"false\"",
+            .kwFun => "keyword \"fun\"",
+            .kwFor => "keyword \"for\"",
+            .kwIf => "keyword \"if\"",
+            .kwNil => "keyword \"nil\"",
+            .kwOr => "keyword \"or\"",
+            .kwPrint => "keyword \"print\"",
+            .kwReturn => "keyword \"return\"",
+            .kwSuper => "keyword \"super\"",
+            .kwThis => "keyword \"this\"",
+            .kwTrue => "keyword \"true\"",
+            .kwVar => "keyword \"var\"",
+            .kwWhile => "keyword \"while\"",
+
+            .tyNum => "keyword \"number\"",
+            .tyBool => "keyword \"bool\"",
+            .tyString => "keyword \"string\"",
+            .tyVoid => "keyword \"void\"",
+        };
+    }
 };
 
 pub const keywordMap = std.StaticStringMap(TokenType).initComptime(.{
@@ -245,22 +299,22 @@ pub const TokenIterator = struct {
 
                 // one/two character tokens
                 '<' => {
-                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    const offset: usize = if (cnext != '=') 1 else 2;
                     self.position = i + offset;
                     return .{ .tokenType = if (cnext == '=') .lessEqual else .less, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '>' => {
-                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    const offset: usize = if (cnext != '=') 1 else 2;
                     self.position = i + offset;
                     return .{ .tokenType = if (cnext == '=') .greaterEqual else .greater, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '!' => {
-                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    const offset: usize = if (cnext != '=') 1 else 2;
                     self.position = i + offset;
                     return .{ .tokenType = if (cnext != '=') .bang else .bangEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },
                 '=' => {
-                    const offset = if (cnext != '=') i + 1 else i + 2;
+                    const offset: usize = if (cnext != '=') 1 else 2;
                     self.position = i + offset;
                     return .{ .tokenType = if (cnext != '=') .equal else .equalEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
                 },

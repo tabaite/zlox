@@ -9,7 +9,7 @@ const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 const ErrorLog = errors.ErrorLog;
-pub const ErrorTrace = errors.ErrorTrace;
+const ErrorTrace = errors.ErrorTrace;
 
 const Handle = bytecode.HandledOperand;
 
@@ -124,7 +124,9 @@ pub const AstParser = struct {
         var args: [MAX_ARGS]bytecode.ArgInfo = undefined;
         var argCount: usize = 0;
 
-        const argStart = toi(self.tryPeek());
+        // if EOF, main ( EOF,
+        // skip parsing arguments
+        const argStart: Token = self.tryPeek() orelse .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 };
 
         if (argStart.tokenType != .rightParen) while (self.tryPeek()) |_| {
             const arg_name = self.matchCurrentOrLogErrAndNull(.identifier, log) orelse break;
