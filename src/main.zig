@@ -9,8 +9,11 @@ const parsing = lib.parsing;
 const runtime = lib.runtime;
 const bytecode = lib.bytecode;
 const errors = lib.errors;
+const context = lib.context;
 const ErrorLog = errors.ErrorLog;
 const ErrorTrace = errors.ErrorTrace;
+
+const Context = context.Context;
 
 pub const ProgramFunction = enum {
     unknown,
@@ -73,13 +76,13 @@ pub fn main() !void {
 
     defer gpa.free(contents);
 
-    var iter = scanning.TokenIterator.init(contents);
-
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const astAlloc = arena.allocator();
 
-    var errLog = try ErrorLog.init(astAlloc, &iter);
+    var iter = scanning.TokenIterator.init(contents);
+    var errLog = try ErrorLog.init(astAlloc);
+    const ctx = Context{ .tokenIterator = &iter, .log = &errLog };
 
     switch (operation) {
         .tokenize => {
@@ -102,9 +105,8 @@ pub fn main() !void {
         .parse => {
             // an expression can never be less than 1 token
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter, &errLog);
 
-            try astParser.parseAndCompileAll(&codegen, &errLog);
+            try parsing.parseAndCompileAll(ctx, &codegen);
 
             const errs = errLog.recover();
             if (errs != null) {
@@ -157,15 +159,16 @@ pub fn main() !void {
     }
 }
 
-fn handleErrorTrace(trace: ErrorTrace, context: *scanning.TokenIterator, out: std.io.AnyWriter) !void {
-    const line: []u8 = if (trace.where) |where| context.exchangeTokenForLine(where) else context.getLineWithEOF();
+fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !void {
+    const iter = ctx.iter;
+    const line: []u8 = if (trace.where) |where| iter.exchangeTokenForLine(where) else iter.getLineWithEOF();
 
     try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ 0, line });
     switch (trace.err) {
         .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
         .expectedToken => |e| {
             if (e.found) |found| {
-                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), context.exchangeTokenForSource(found) });
+                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), ctx.exchangeTokenForSource(found) });
             } else {
                 try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
             }

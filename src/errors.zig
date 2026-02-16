@@ -152,7 +152,7 @@ pub const ErrorLog = struct {
     backing: []ErrorTrace,
     used: usize,
 
-    pub fn init(allocator: Allocator, _: *scanning.TokenIterator) !ErrorLog {
+    pub fn init(allocator: Allocator) !ErrorLog {
         return .{
             .backing = try allocator.alloc(ErrorTrace, BACKINGSIZE),
             .used = 0,

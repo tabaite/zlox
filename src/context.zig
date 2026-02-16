@@ -10,7 +10,7 @@ pub const Context = struct {
     tokenIterator: *TokenIterator,
     log: *ErrorLog,
 
-    pub fn pushError(self: *Context, err: Error) void {
+    pub fn pushError(self: Context, err: Error) void {
         self.log.push(err, self.tokenIterator.getCurrentTokenContext());
     }
 };
