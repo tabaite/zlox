@@ -158,7 +158,9 @@ pub fn main() !void {
 }
 
 fn handleErrorTrace(trace: ErrorTrace, context: *scanning.TokenIterator, out: std.io.AnyWriter) !void {
-    try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ trace.lineNum, trace.line });
+    const line: []u8 = if (trace.where) |where| context.exchangeTokenForLine(where) else context.getLineWithEOF();
+
+    try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ 0, line });
     switch (trace.err) {
         .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
         .expectedToken => |e| {

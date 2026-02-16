@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const Type = bytecode.Type;
 const Token = scanning.Token;
 const TokenType = scanning.TokenType;
+const TokenContext = scanning.TokenContext;
 
 pub const Error = union(enum) {
     // SCANNING ERRORS
@@ -136,46 +137,30 @@ pub const Error = union(enum) {
 
 pub const ErrorTrace = struct {
     err: Error,
-    lineNum: u32,
+    // null means EOF
+    where: ?Token,
+    lineNumber: u32,
+};
 
-    lineStart: u32,
-    lineEndExclusive: u32,
+pub const ErrorContext = struct {
+    where: ?Token,
+    lineNumber: u32,
 };
 
 pub const ErrorLog = struct {
     const BACKINGSIZE = 32767;
-    // li'l bit spaghetti
-    context: *scanning.TokenIterator,
     backing: []ErrorTrace,
     used: usize,
 
-    pub fn init(allocator: Allocator, iter: *scanning.TokenIterator) !ErrorLog {
+    pub fn init(allocator: Allocator, _: *scanning.TokenIterator) !ErrorLog {
         return .{
-            .context = iter,
             .backing = try allocator.alloc(ErrorTrace, BACKINGSIZE),
             .used = 0,
         };
     }
 
-    pub fn push(self: *ErrorLog, err: Error) void {
-        var start: u32 = 0;
-        var end: u32 = @truncate(self.context.source.len);
-
-        const pos = self.context.position;
-        for (0..pos) |i| {
-            const idx = pos - i - 1;
-            if (self.context.source[idx] == '\n') {
-                start = @truncate(i);
-                break;
-            }
-        }
-        for (pos..self.context.source.len) |i| {
-            if (self.context.source[i] == '\n') {
-                end = @truncate(i);
-                break;
-            }
-        }
-        const trace: ErrorTrace = .{ .err = err, .lineNum = self.context.lineNumber, .line = self.context.source[start..end] };
+    pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
+        const trace: ErrorTrace = .{ .err = err, .where = context.token, .lineNumber = context.lineNumber };
         self.backing[self.used] = trace;
         self.used += 1;
     }

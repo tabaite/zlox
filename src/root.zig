@@ -3,3 +3,4 @@ pub const parsing = @import("parsing.zig");
 pub const runtime = @import("runtime.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const errors = @import("errors.zig");
+pub const context = @import("context.zig");

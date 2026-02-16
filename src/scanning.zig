@@ -5,7 +5,8 @@ const std = @import("std");
 const testing = std.testing;
 
 pub const TokenType = enum {
-    // workaround since we don't have Option<T>
+    // workarounds to interface properly with error log
+    unterminatedString,
     invalidChar,
 
     leftParen,
@@ -147,6 +148,17 @@ pub const Token = struct {
     sourceEndExclusive: u32,
 };
 
+pub const TokenContext = struct {
+    token: ?Token,
+    lineNumber: u32,
+};
+inline fn tok(ty: TokenType, start: u32, end: u32, lineNumber: u32) TokenContext {
+    return .{ .token = .{ .tokenType = ty, .sourceStart = start, .sourceEndExclusive = end }, .lineNumber = lineNumber };
+}
+inline fn nulltok(lineNumber: u32) TokenContext {
+    return .{ .token = null, .lineNumber = lineNumber };
+}
+
 pub const TokenIterator = struct {
     source: []u8,
     position: usize = 0,
@@ -156,11 +168,77 @@ pub const TokenIterator = struct {
         return self.source[token.sourceStart..token.sourceEndExclusive];
     }
 
+    pub fn exchangeTokenForLine(self: *TokenIterator, token: Token) []u8 {
+        const lineStart = s: {
+            // the token's start can never be a new line, so it's fine
+            for (1..token.sourceStart + 1) |ii| {
+                const idx: usize = @as(usize, @intCast(token.sourceStart)) - ii;
+                if (self.source[idx] == '\n') {
+                    break :s idx + 1;
+                }
+            }
+            break :s 0;
+        };
+        const lineEnd: u32 = s: {
+            // the token's start can never be a new line, so it's fine
+            for (token.sourceEnd..self.source.len) |idx| {
+                if (self.source[idx] == '\n') {
+                    break :s idx;
+                }
+            }
+            break :s self.source.len;
+        };
+        return self.source[lineStart..lineEnd];
+    }
+
+    pub fn getLineWithEOF(self: *TokenIterator) []u8 {
+        const lineStart = s: {
+            // the token's start can never be a new line, so it's fine
+            for (1..self.source.len + 1) |ii| {
+                const idx: usize = self.source.len - ii;
+                if (self.source[idx] == '\n') {
+                    break :s idx + 1;
+                }
+            }
+            break :s 0;
+        };
+        return self.source[lineStart..];
+    }
+
     pub fn init(source: []u8) TokenIterator {
         return .{ .source = source };
     }
 
     pub fn next(self: *TokenIterator, log: *ErrorLog) ?Token {
+        const token = self.peek(log);
+        if (token) |t| {
+            self.position = t.sourceEndExclusive;
+            return t;
+        } else {
+            return null;
+        }
+    }
+
+    pub fn peek(self: *TokenIterator, log: *ErrorLog) ?Token {
+        const result = self.scan();
+        if (result.token) |token| {
+            switch (token.tokenType) {
+                .invalidChar => log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result),
+                .unterminatedString => log.push(.unterminatedString, result),
+                else => {},
+            }
+            return token;
+        } else {
+            return null;
+        }
+    }
+
+    pub fn getCurrentTokenContext(self: *TokenIterator) TokenContext {
+        return self.scan();
+    }
+
+    fn scan(self: *TokenIterator) TokenContext {
+        var lineNumber = self.lineNumber;
         var i = self.position;
 
         while (i < self.source.len) {
@@ -175,10 +253,9 @@ pub const TokenIterator = struct {
 
                     end += 1;
                 }
-                self.position = end;
                 const kwLookup = keywordMap.get(self.source[i..end]);
                 const idenType = kwLookup orelse .identifier;
-                return .{ .tokenType = idenType, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(end) };
+                return tok(idenType, @truncate(i), @truncate(end), lineNumber);
             }
 
             if (isNumeric(current)) {
@@ -201,15 +278,14 @@ pub const TokenIterator = struct {
 
                     end += 1;
                 }
-                self.position = end;
-                return .{ .tokenType = .number, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(self.source.len) };
+                return tok(.number, @truncate(i), @truncate(self.source.len), lineNumber);
             }
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
             switch (current) {
                 // windows bs (crlf), whitespace
                 '\r', '\t', ' ' => {},
-                '\n' => self.lineNumber += 1,
+                '\n' => lineNumber += 1,
 
                 // slash or comments
                 '/' => comment: {
@@ -217,15 +293,14 @@ pub const TokenIterator = struct {
                         for (i..self.source.len) |j| {
                             const sscurrent = self.source[j];
                             if (sscurrent == '\n') {
-                                self.lineNumber += 1;
+                                lineNumber += 1;
                                 i = j;
                                 break :comment;
                             }
                         }
                         i = self.source.len;
                     } else {
-                        self.position = i + 1;
-                        return .{ .tokenType = .slash, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                        return tok(.slash, @truncate(i), @truncate(i + 1), lineNumber);
                     }
                 },
 
@@ -235,101 +310,82 @@ pub const TokenIterator = struct {
                     for (start..self.source.len) |j| {
                         const sscurrent = self.source[j];
                         if (sscurrent == '\n') {
-                            self.lineNumber += 1;
+                            lineNumber += 1;
                         }
                         if (sscurrent == '"') {
-                            self.position = j + 1;
-                            return .{ .tokenType = .string, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(j) };
+                            return tok(.string, @truncate(i), @truncate(j), lineNumber);
                         }
                     }
                     // error but we'll get there
-                    log.push(.unterminatedString);
-                    return .{ .tokenType = .string, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(self.source.len) };
+                    const res = tok(.unterminatedString, @truncate(i), @truncate(self.source.len), lineNumber);
+                    return res;
                 },
 
                 // one character tokens
                 '(' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .leftParen, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.leftParen, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 ')' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .rightParen, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.rightParen, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '{' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .leftBrace, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.leftBrace, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '}' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .rightBrace, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.rightBrace, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 ',' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .comma, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.comma, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '.' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .dot, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.dot, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '-' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .minus, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.minus, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '+' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .plus, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.plus, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 ';' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .semicolon, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.semicolon, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '*' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .star, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.star, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 '%' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .percent, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.percent, @truncate(i), @truncate(i + 1), lineNumber);
                 },
                 ':' => {
-                    self.position = i + 1;
-                    return .{ .tokenType = .colon, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    return tok(.colon, @truncate(i), @truncate(i + 1), lineNumber);
                 },
 
                 // one/two character tokens
                 '<' => {
                     const offset: usize = if (cnext != '=') 1 else 2;
-                    self.position = i + offset;
-                    return .{ .tokenType = if (cnext == '=') .lessEqual else .less, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
+                    return tok(if (cnext == '=') .lessEqual else .less, @truncate(i), @truncate(i + offset), lineNumber);
                 },
                 '>' => {
                     const offset: usize = if (cnext != '=') 1 else 2;
-                    self.position = i + offset;
-                    return .{ .tokenType = if (cnext == '=') .greaterEqual else .greater, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
+                    return tok(if (cnext == '=') .greaterEqual else .greater, @truncate(i), @truncate(i + offset), lineNumber);
                 },
                 '!' => {
                     const offset: usize = if (cnext != '=') 1 else 2;
-                    self.position = i + offset;
-                    return .{ .tokenType = if (cnext != '=') .bang else .bangEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
+                    return tok(if (cnext != '=') .bang else .bangEqual, @truncate(i), @truncate(i + offset), lineNumber);
                 },
                 '=' => {
                     const offset: usize = if (cnext != '=') 1 else 2;
-                    self.position = i + offset;
-                    return .{ .tokenType = if (cnext != '=') .equal else .equalEqual, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + offset) };
+                    return tok(if (cnext != '=') .equal else .equalEqual, @truncate(i), @truncate(i + offset), lineNumber);
                 },
                 else => {
-                    self.position = i + 1;
-                    log.push(.{ .illegalToken = .{ .token = self.source[i .. i + 1] } });
-                    return .{ .tokenType = .invalidChar, .sourceStart = @truncate(i), .sourceEndExclusive = @truncate(i + 1) };
+                    const res = tok(.invalidChar, @truncate(i), @truncate(i + 1), lineNumber);
+                    return res;
                 },
             }
 
             i += 1;
         }
 
-        self.position = self.source.len;
-        return null;
+        return nulltok(lineNumber);
     }
 };
 
