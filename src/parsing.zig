@@ -475,6 +475,7 @@ fn primaryRule(ctx: Context, codegen: *CodeGen) !Handle {
             // Since this is the last rule checked, a rejection means there's no expression.
             // If we're calling the expression rules, we definitely need one.
             ctx.pushError(.expectedExpression);
+            advance(ctx);
             return .ERR;
         },
     };

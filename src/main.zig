@@ -181,26 +181,6 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
         try out.writeByte('\n');
     }
 
-    switch (trace.err) {
-        .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
-        .unterminatedString => _ = try out.write("unterminated string"),
-        .expectedToken => |e| {
-            if (e.found) |found| {
-                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), iter.exchangeTokenForSource(found) });
-            } else {
-                try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
-            }
-        },
-        .expectedTypeToken => |e| {
-            if (e.found) |found| {
-                try out.print("expected a type, found {s} ( \"{s}\" )", .{ found.tokenType.typeAsString(), iter.exchangeTokenForSource(found) });
-            } else {
-                _ = try out.write("expected a type, found the end of the file");
-            }
-        },
-        .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
-        .expectedExpression => _ = try out.write("expected a valid expression"),
-        else => _ = try out.write("man idk"),
-    }
+    trace.err.printSelf(out);
     try out.writeByteNTimes('\n', 2);
 }

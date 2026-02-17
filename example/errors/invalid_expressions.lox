@@ -1,7 +1,6 @@
 fun main() {
     var height = ;
-    // segfaults; diagnose later
-    // var see = number;
+    var see = number;
     sf(;
     hey(**);
     {}

@@ -102,10 +102,6 @@ pub const Error = union(enum) {
         foundType: Type,
     },
 
-    incompatibleTypeArgument: struct {
-        expectedType: Type,
-        foundType: Type,
-    },
     incorrectNumberOfArguments: struct {
         // Currently MAX_ARGS is 128.
         // It's very unlikely it will exceed 65536.
@@ -133,6 +129,51 @@ pub const Error = union(enum) {
     // -----------^ rad already defined
     variableAlreadyDefined: struct { name: []u8 },
     functionAlreadyDefined: struct { name: []u8 },
+
+    pub fn printSelf(self: Error, out: std.io.AnyWriter) !void {
+        switch (self) {
+            .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
+            .unterminatedString => _ = try out.write("unterminated string"),
+            .expectedToken => |e| {
+                if (e.found) |found| {
+                    try out.print("expected {s}, found {s}", .{ e.expected.typeAsString(), found.tokenType.typeAsString() });
+                } else {
+                    try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
+                }
+            },
+            .expectedTypeToken => |e| {
+                if (e.found) |found| {
+                    try out.print("expected a type, found {s}", .{found.tokenType.typeAsString()});
+                } else {
+                    _ = try out.write("expected a type, found the end of the file");
+                }
+            },
+            .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
+            .expectedExpression => _ = try out.write("expected a valid expression"),
+            .argLimitExceeded => _ = try out.write("argument limit for functions exceeded"),
+            .argumentTypeCannotBeVoid => _ = try out.write("arguments must not be type 'void'"),
+
+            .incompatibleTypeUnary => _ = try out.write("incompatible type (unary)"),
+            .incompatibleTypeBinary => _ = try out.write("incompatible type (binary)"),
+            .incompatibleTypeInitialValue => _ = try out.write("incompatible type (initial value)"),
+            .incompatibleTypeReturn => _ = try out.write("incompatible type (return value)"),
+            .argumentTypeIncorrect => _ = try out.write("incompatible type (provided argument)"),
+
+            .mainFunctionNotDeclared => _ = try out.write("must declare a main function"),
+            .mainFunctionCannotHaveReturnType => _ = try out.write("main function must not return a value"),
+            .mainFunctionCannotHaveArguments => _ = try out.write("main function must not have arguments"),
+
+            .incorrectNumberOfArguments => _ = try out.write("incorrect number of arguments"),
+
+            .variableMustHaveTypeWhenDefined => _ = try out.write("variables must have either a provided or inferred type when declared"),
+
+            .variableNotDefined => _ = try out.write("trying to access undeclared variable"),
+            .functionNotDefined => _ = try out.write("trying to call undeclared function"),
+
+            .variableAlreadyDefined => _ = try out.write("trying to redefine a variable (shadowing soon i promise)"),
+            .functionAlreadyDefined => _ = try out.write("trying to redefine a function (overloading soon i promise)"),
+        }
+    }
 };
 
 pub const ErrorTrace = struct {
