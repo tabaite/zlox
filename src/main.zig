@@ -111,7 +111,7 @@ pub fn main() !void {
             const errs = errLog.recover();
             if (errs != null) {
                 for (errs.?) |trace| {
-                    try handleErrorTrace(trace, &iter, stderrAny);
+                    try handleErrorTrace(trace, ctx, stderrAny);
                 }
                 return;
             }
@@ -122,21 +122,20 @@ pub fn main() !void {
         },
         .evaluate => {
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-            var astParser = parsing.AstParser.new(&iter, &errLog);
 
             _ = try stderr.write("\nbytecode:\n");
 
-            try astParser.parseAndCompileAll(&codegen, &errLog);
+            try parsing.parseAndCompileAll(ctx, &codegen);
 
             const errs = errLog.recover();
             if (errs != null) {
                 for (errs.?) |trace| {
-                    try handleErrorTrace(trace, &iter, stderrAny);
+                    try handleErrorTrace(trace, ctx, stderrAny);
                 }
                 return;
             }
 
-            const programOrNull = codegen.finalize(&errLog);
+            const programOrNull = codegen.finalize(ctx);
             if (programOrNull) |program| {
                 try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
                 for (program.instructions) |ins| {
@@ -160,19 +159,47 @@ pub fn main() !void {
 }
 
 fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !void {
-    const iter = ctx.iter;
-    const line: []u8 = if (trace.where) |where| iter.exchangeTokenForLine(where) else iter.getLineWithEOF();
+    const iter = ctx.tokenIterator;
 
-    try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ 0, line });
+    const whereSrc = if (trace.where) |where| iter.exchangeTokenForSource(where) else "";
+    {
+        const line: []u8, const arrowOffset, const arrowLength = a: {
+            if (trace.where) |where| {
+                const line = iter.exchangeTokenForLine(where);
+                const lineInt = @intFromPtr(line.ptr);
+                const tokPosInt = @intFromPtr(whereSrc.ptr);
+                break :a .{ line, tokPosInt - lineInt, whereSrc.len };
+            } else {
+                const line = iter.getLineWithEOF();
+                break :a .{ line, line.len, 1 };
+            }
+        };
+        try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ trace.lineNumber, line });
+        try out.print("{d}: ", .{trace.lineNumber});
+        try out.writeByteNTimes('-', arrowOffset);
+        try out.writeByteNTimes('^', arrowLength);
+        try out.writeByte('\n');
+    }
+
     switch (trace.err) {
         .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
+        .unterminatedString => _ = try out.write("unterminated string"),
         .expectedToken => |e| {
             if (e.found) |found| {
-                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), ctx.exchangeTokenForSource(found) });
+                try out.print("expected {s}, found {s} ( \"{s}\" )", .{ e.expected.typeAsString(), found.tokenType.typeAsString(), iter.exchangeTokenForSource(found) });
             } else {
                 try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
             }
         },
+        .expectedTypeToken => |e| {
+            if (e.found) |found| {
+                try out.print("expected a type, found {s} ( \"{s}\" )", .{ found.tokenType.typeAsString(), iter.exchangeTokenForSource(found) });
+            } else {
+                _ = try out.write("expected a type, found the end of the file");
+            }
+        },
+        .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
+        .expectedExpression => _ = try out.write("expected a valid expression"),
         else => _ = try out.write("man idk"),
     }
     try out.writeByteNTimes('\n', 2);

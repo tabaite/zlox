@@ -1,7 +1,7 @@
 // Any type value that is not the given built-in values is
 // a user-defined class.
-
-const std = @import("std");
+const prelude = @import("prelude.zig");
+const std = prelude.std;
 const bytecode = @import("bytecode.zig");
 const errors = @import("errors.zig");
 const Allocator = std.mem.Allocator;
@@ -28,12 +28,13 @@ test "push varstack" {
     stack.deinit();
 }
 
+const Stack = prelude.Stack;
 const Call = struct { returnPosition: usize, varStackHeight: usize };
 
 // The usize counts how high the stack is in terms of variables (ABSOLUTE POSITION).
-pub const CallStack = errors.Stack(Call, 16777215);
-pub const VarStack = errors.Stack(Operand, 16777215);
-pub const ArgBuffer = errors.Stack(Operand, 128);
+pub const CallStack = Stack(Call, 16777215);
+pub const VarStack = Stack(Operand, 16777215);
+pub const ArgBuffer = Stack(Operand, 128);
 
 pub const Runtime = struct {
     stringAllocator: Allocator,

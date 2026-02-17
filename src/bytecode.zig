@@ -1,7 +1,11 @@
-const std = @import("std");
+const prelude = @import("prelude.zig");
+const std = prelude.std;
 // circular imports are allowed!!!
 const parsing = @import("parsing.zig");
-const errors = @import("errors.zig");
+const context = @import("context.zig");
+
+const Stack = prelude.Stack;
+const Context = context.Context;
 const Allocator = std.mem.Allocator;
 
 pub const MAX_ARGS = 128;
@@ -151,8 +155,8 @@ const ScopeExtent = struct {
     numVars: usize = 0,
     numItems: usize = 0,
 };
-const ScopeExtentStack = errors.Stack(ScopeExtent, 32767);
-const ScopeNamesStack = errors.Stack([]u8, 32767);
+const ScopeExtentStack = Stack(ScopeExtent, 32767);
+const ScopeNamesStack = Stack([]u8, 32767);
 
 const CurrentFunctionContext = struct {
     name: []u8,
@@ -161,8 +165,6 @@ const CurrentFunctionContext = struct {
     retType: Type,
     returnsOnAllPaths: bool,
 };
-
-const ErrorLog = errors.ErrorLog;
 
 pub const BytecodeGenerator = struct {
     const FunctionType = struct {
@@ -191,9 +193,9 @@ pub const BytecodeGenerator = struct {
 
     /// TODO: fix
     /// Returns null if no entry point available to actually run program.
-    pub fn finalize(self: *BytecodeGenerator, log: *ErrorLog) ?Program {
+    pub fn finalize(self: *BytecodeGenerator, ctx: Context) ?Program {
         if (self.entryPoint == .none) {
-            log.push(.mainFunctionNotDeclared);
+            ctx.pushError(.mainFunctionNotDeclared);
             return null;
         }
         return .{ .entryPoint = @as(usize, @intFromEnum(self.entryPoint)) - 1, .instructions = self.bytecodeList.items };
@@ -229,16 +231,16 @@ pub const BytecodeGenerator = struct {
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn enterFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []ArgInfo, retType: Type) !void {
+    pub fn enterFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []ArgInfo, retType: Type) !void {
         if (self.currentFunction != null) {
             @panic("Nested function parsed! This should not happen due to parsing restrictions");
         }
         if (std.mem.eql(u8, name, "main")) {
             if (args.len != 0) {
-                log.push(.{ .mainFunctionCannotHaveArguments = .{ .numArgsFound = @truncate(args.len) } });
+                ctx.pushError(.{ .mainFunctionCannotHaveArguments = .{ .numArgsFound = @truncate(args.len) } });
             }
             if (retType != .nil) {
-                log.push(.{ .mainFunctionCannotHaveReturnType = .{ .foundType = retType } });
+                ctx.pushError(.{ .mainFunctionCannotHaveReturnType = .{ .foundType = retType } });
             }
             self.entryPoint = @enumFromInt(self.bytecodeList.items.len + 1);
         }
@@ -285,7 +287,7 @@ pub const BytecodeGenerator = struct {
         self.currentFunction = func;
     }
 
-    pub fn exitFunction(self: *BytecodeGenerator, log: *ErrorLog) !void {
+    pub fn exitFunction(self: *BytecodeGenerator, ctx: Context) !void {
         defer self.currentFunction = null;
         if (self.currentFunction != null) {
             const f = self.currentFunction.?;
@@ -293,7 +295,7 @@ pub const BytecodeGenerator = struct {
                 if (f.retType != .nil) {
                     std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
                 } else {
-                    try self.insertFunctionReturn(log, .NIL);
+                    try self.insertFunctionReturn(ctx, .NIL);
                 }
             }
             for (f.args) |arg| {
@@ -309,7 +311,6 @@ pub const BytecodeGenerator = struct {
 
     pub fn enterScope(self: *BytecodeGenerator) void {
         self.scopeExtentStack.push(.{});
-        std.debug.print("entered scope\n", .{});
     }
 
     pub fn exitScope(self: *BytecodeGenerator) !void {
@@ -321,18 +322,17 @@ pub const BytecodeGenerator = struct {
         for (0..num.numItems) |_| {
             try self.popFromStack();
         }
-        std.debug.print("exited scope\n", .{});
     }
 
-    pub fn callFunction(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, args: []HandledOperand) !HandledOperand {
+    pub fn callFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []HandledOperand) !HandledOperand {
         const func = self.functionRegistry.get(name) orelse {
-            log.push(.{ .functionNotDefined = .{ .name = name } });
+            ctx.pushError(.{ .functionNotDefined = .{ .name = name } });
             return .ERR;
         };
 
         const argLen = l: {
             if (args.len != func.args.len) {
-                log.push(.{ .incorrectNumberOfArguments = .{ .numExpected = @truncate(func.args.len), .numFound = @truncate(args.len) } });
+                ctx.pushError(.{ .incorrectNumberOfArguments = .{ .numExpected = @truncate(func.args.len), .numFound = @truncate(args.len) } });
                 break :l @min(args.len, func.args.len);
             } else {
                 break :l args.len;
@@ -353,7 +353,7 @@ pub const BytecodeGenerator = struct {
             const defArg = func.args[i];
 
             if (argDecayedType != defArg.type) {
-                log.push(.{ .argumentTypeIncorrect = .{ .found = argDecayedType, .expected = defArg.type } });
+                ctx.pushError(.{ .argumentTypeIncorrect = .{ .found = argDecayedType, .expected = defArg.type } });
             }
 
             try self.bytecodeList.append(self.allocator, Instruction{
@@ -372,11 +372,11 @@ pub const BytecodeGenerator = struct {
         return HandledOperand{ .type = func.retType, .operand = .RET_HANDLE };
     }
 
-    pub fn registerVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
+    pub fn registerVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
         const res = try self.variableRegistry.getOrPut(self.allocator, name);
         if (!res.found_existing) {
             self.scopeNamesStack.push(name);
-            const handle = try self.pushOperand(log, name, typeInfo);
+            const handle = try self.pushOperand(ctx, name, typeInfo);
             const scopeVarCount = self.scopeExtentStack.top();
             if (scopeVarCount != null) {
                 (scopeVarCount orelse unreachable).numVars += 1;
@@ -384,20 +384,20 @@ pub const BytecodeGenerator = struct {
             res.value_ptr.* = handle;
             return handle;
         }
-        log.push(.{ .functionAlreadyDefined = .{ .name = name } });
+        ctx.pushError(.{ .functionAlreadyDefined = .{ .name = name } });
         return .ERR;
     }
 
-    pub fn getVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8) HandledOperand {
+    pub fn getVariable(self: *BytecodeGenerator, ctx: Context, name: []u8) HandledOperand {
         return self.variableRegistry.get(name) orelse {
-            log.push(.{ .variableNotDefined = .{ .name = name } });
+            ctx.pushError(.{ .variableNotDefined = .{ .name = name } });
             return .ERR;
         };
     }
 
-    pub fn updateVariable(self: *BytecodeGenerator, log: *ErrorLog, name: []u8, new: HandledOperand) !HandledOperand {
+    pub fn updateVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, new: HandledOperand) !HandledOperand {
         const handle = self.variableRegistry.getPtr(name) orelse {
-            log.push(.{ .variableNotDefined = .{ .name = name } });
+            ctx.pushError(.{ .variableNotDefined = .{ .name = name } });
             return .ERR;
         };
         const oldType = handle.type;
@@ -410,11 +410,11 @@ pub const BytecodeGenerator = struct {
         return try self.moveOperand(new, handle.*);
     }
 
-    pub fn insertFunctionReturn(self: *BytecodeGenerator, log: *ErrorLog, val: HandledOperand) !void {
+    pub fn insertFunctionReturn(self: *BytecodeGenerator, ctx: Context, val: HandledOperand) !void {
         const f = self.currentFunction orelse return;
         self.currentFunction.?.returnsOnAllPaths = true;
         if (val.type != f.retType) {
-            log.push(.{ .incompatibleTypeReturn = .{ .expectedType = f.retType, .foundType = val.type } });
+            ctx.pushError(.{ .incompatibleTypeReturn = .{ .expectedType = f.retType, .foundType = val.type } });
             return;
         }
         if (f.retType != .nil) {
@@ -448,7 +448,7 @@ pub const BytecodeGenerator = struct {
         try self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 });
     }
     // name is only used for debugging currently
-    pub fn pushOperand(self: *BytecodeGenerator, log: *ErrorLog, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
+    pub fn pushOperand(self: *BytecodeGenerator, ctx: Context, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
         // This can store any (built-in) type.
         const variableSize = 1;
         const InitializeInformation = struct { value: HandledOperand, type: Type };
@@ -474,7 +474,7 @@ pub const BytecodeGenerator = struct {
             else => |t| t,
         };
         if (decayedType != decayedValueType) {
-            log.push(.{ .incompatibleTypeInitialValue = .{ .expectedType = decayedType, .foundType = decayedValueType } });
+            ctx.pushError(.{ .incompatibleTypeInitialValue = .{ .expectedType = decayedType, .foundType = decayedValueType } });
             return .ERR;
         }
         return h: switch (typeInfo.type) {
@@ -513,7 +513,7 @@ pub const BytecodeGenerator = struct {
         };
     }
 
-    pub fn pushBinaryOperation(self: *BytecodeGenerator, log: *ErrorLog, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
+    pub fn pushBinaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
         const InsInfo = struct {
             op: Operation,
             dest: HandledOperand,
@@ -553,7 +553,7 @@ pub const BytecodeGenerator = struct {
             };
 
             if (aTypeDecayed != info.argType or bTypeDecayed != info.argType) {
-                log.push(.{ .incompatibleTypeBinary = .{ .operation = op, .lhsType = a.type, .rhsType = b.type } });
+                ctx.pushError(.{ .incompatibleTypeBinary = .{ .operation = op, .lhsType = a.type, .rhsType = b.type } });
                 return .ERR;
             }
 
@@ -569,7 +569,7 @@ pub const BytecodeGenerator = struct {
             };
 
             const newVar: NewVariableTypeInfo = .{ .provided = .{ .type = info.retType, .initial = null } };
-            const dest = try self.pushOperand(log, @constCast("TEMP TEMP TEMP TEMP"), newVar);
+            const dest = try self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), newVar);
             break :r .{ .op = .{ .op = info.op, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .dest = dest };
         };
         const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = @truncate(res.dest.operand.item) };
@@ -577,13 +577,13 @@ pub const BytecodeGenerator = struct {
         return res.dest;
     }
 
-    pub fn pushUnaryOperation(self: *BytecodeGenerator, log: *ErrorLog, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
+    pub fn pushUnaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
         const res: Operation = switch (op) {
             .negate => switch (a.type) {
                 .number => .{ .op = .negateNumber, .argType = .bothHandle },
                 .numberLit, .errorType => .{ .op = .negateNumber, .argType = .bothLiteral },
                 else => {
-                    log.push(.{ .incompatibleTypeUnary = .{ .operation = op, .foundType = a.type } });
+                    ctx.pushError(.{ .incompatibleTypeUnary = .{ .operation = op, .foundType = a.type } });
                     return .ERR;
                 },
             },
@@ -591,12 +591,12 @@ pub const BytecodeGenerator = struct {
                 .bool => .{ .op = .negateBool, .argType = .bothHandle },
                 .boolLit, .errorType => .{ .op = .negateBool, .argType = .bothLiteral },
                 else => {
-                    log.push(.{ .incompatibleTypeUnary = .{ .operation = op, .foundType = a.type } });
+                    ctx.pushError(.{ .incompatibleTypeUnary = .{ .operation = op, .foundType = a.type } });
                     return .ERR;
                 },
             },
         };
-        const dest = try self.pushOperand(log, @constCast("TEMP TEMP TEMP TEMP"), .{ .provided = .{ .type = a.type, .initial = a } });
+        const dest = try self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), .{ .provided = .{ .type = a.type, .initial = a } });
         const item = Instruction{ .op = res, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
         try self.bytecodeList.append(self.allocator, item);
         return dest;

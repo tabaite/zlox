@@ -63,6 +63,8 @@ pub const TokenType = enum {
     pub fn typeAsString(self: TokenType) []const u8 {
         return switch (self) {
             .invalidChar => "INVALID",
+            .unterminatedString => "unterminated string",
+
             .leftParen => "left parenthesis",
             .rightParen => "right parenthesis",
             .leftBrace => "left brace",
@@ -179,9 +181,9 @@ pub const TokenIterator = struct {
             }
             break :s 0;
         };
-        const lineEnd: u32 = s: {
+        const lineEnd = s: {
             // the token's start can never be a new line, so it's fine
-            for (token.sourceEnd..self.source.len) |idx| {
+            for (token.sourceEndExclusive..self.source.len) |idx| {
                 if (self.source[idx] == '\n') {
                     break :s idx;
                 }
@@ -222,12 +224,17 @@ pub const TokenIterator = struct {
     pub fn peek(self: *TokenIterator, log: *ErrorLog) ?Token {
         const result = self.scan();
         if (result.token) |token| {
-            switch (token.tokenType) {
-                .invalidChar => log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result),
-                .unterminatedString => log.push(.unterminatedString, result),
-                else => {},
-            }
-            return token;
+            return switch (token.tokenType) {
+                .invalidChar => inv: {
+                    log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result);
+                    break :inv token;
+                },
+                .unterminatedString => uns: {
+                    log.push(.unterminatedString, result);
+                    break :uns Token{ .tokenType = .string, .sourceEndExclusive = token.sourceEndExclusive, .sourceStart = token.sourceStart };
+                },
+                else => token,
+            };
         } else {
             return null;
         }
@@ -239,6 +246,7 @@ pub const TokenIterator = struct {
 
     fn scan(self: *TokenIterator) TokenContext {
         var lineNumber = self.lineNumber;
+        defer self.lineNumber = lineNumber;
         var i = self.position;
 
         while (i < self.source.len) {
