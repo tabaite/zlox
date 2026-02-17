@@ -344,6 +344,10 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
 }
 
 fn expressionRule(ctx: Context, codegen: *CodeGen) Allocator.Error!Handle {
+    if (toi(peek(ctx)).tokenType == .semicolon) {
+        ctx.pushError(.expectedExpression);
+        return .ERR;
+    }
     return try orRule(ctx, codegen);
 }
 
@@ -430,6 +434,8 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
                 switch (toi(peek(ctx)).tokenType) {
                     .comma => {},
                     .rightParen => break,
+                    // The argument expression is malformed, no running done
+                    .semicolon => return .ERR,
                     else => {
                         // hacky but it works
                         _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
