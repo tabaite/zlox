@@ -1,7 +1,16 @@
 fun main() {
+    // an example set of invalid statements
+    // that should resolve cleanly (not "bleed" errors onto the next line)
+
+    // expressions
     var height = ;
     var see = number;
+
+    // function calls
     sf(;
+    call(number);
+    qe(,)
     hey(**);
+
     {}
 }

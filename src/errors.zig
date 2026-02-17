@@ -168,7 +168,7 @@ pub const Error = union(enum) {
             .variableMustHaveTypeWhenDefined => _ = try out.write("variables must have either a provided or inferred type when declared"),
 
             .variableNotDefined => _ = try out.write("trying to access undeclared variable"),
-            .functionNotDefined => _ = try out.write("trying to call undeclared function"),
+            .functionNotDefined => |n| try out.print("trying to call undeclared function \"{s}\"", .{n.name}),
 
             .variableAlreadyDefined => _ = try out.write("trying to redefine a variable (shadowing soon i promise)"),
             .functionAlreadyDefined => _ = try out.write("trying to redefine a function (overloading soon i promise)"),

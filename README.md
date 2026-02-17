@@ -14,3 +14,22 @@ just a stack). If we encounter a non-fatal error, push it onto there and keep ch
 This relies on the fact that we will *never* use the generated output if we encounter any error.
 Because of this, any rule that **must** return a value in its signature (like fetching a variable
 when the variable doesn't exist) can just send back some junk. yay!
+
+todo:
+- change how parsing works to seperate by lines conceptually
+  reasoning:
+  ```
+  // a)
+  var height = ;
+  // ----------^ expected expression, found semicolon
+  var height = ,;
+  // ----------^ expected expression, found comma
+
+  // b)
+  qe(;)
+  // ^ expected expression, found semicolon
+  qe(,)
+  // ^ expected expression, found comma
+  ```
+  are basically the same, even though we as humans know that in a) the semicolon should signify
+  the end of the expression's valid "area", and in b) the comma should.

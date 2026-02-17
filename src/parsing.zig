@@ -427,7 +427,14 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
                 args[argNums] = try expressionRule(ctx, codegen);
                 argNums += 1;
 
-                _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
+                switch (toi(peek(ctx)).tokenType) {
+                    .comma => {},
+                    .rightParen => break,
+                    else => {
+                        // hacky but it works
+                        _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
+                    },
+                }
 
                 if (argNums < MAX_ARGS) {
                     advance(ctx);
