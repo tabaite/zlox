@@ -163,7 +163,7 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
 
     const whereSrc = if (trace.where) |where| iter.exchangeTokenForSource(where) else "";
     {
-        const line: []u8, const arrowOffset, const arrowLength = a: {
+        const line: []u8, const hlOffset, const hlLen = a: {
             if (trace.where) |where| {
                 const line = iter.exchangeTokenForLine(where);
                 const lineInt = @intFromPtr(line.ptr);
@@ -174,13 +174,15 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
                 break :a .{ line, line.len, 1 };
             }
         };
-        try out.print("error:\n{d}: \x1b[31;1m{s}\x1b[0m\n", .{ trace.lineNumber, line });
+        const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };
+        try out.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
         try out.print("{d}: ", .{trace.lineNumber});
-        try out.writeByteNTimes('-', arrowOffset);
-        try out.writeByteNTimes('^', arrowLength);
-        try out.writeByte('\n');
+        _ = try out.write("\x1b[31;1m");
+        try out.writeByteNTimes('-', hlOffset);
+        try out.writeByteNTimes('^', hlLen);
+        _ = try out.write("\x1b[0m\n");
     }
 
-    trace.err.printSelf(out);
+    try trace.err.printSelf(out);
     try out.writeByteNTimes('\n', 2);
 }
