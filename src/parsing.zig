@@ -28,6 +28,24 @@ pub const BinaryExprType = enum {
     multiply,
     divide,
     modulo,
+
+    pub fn asVerb(self: BinaryExprType) []const u8 {
+        return switch (self) {
+            .equality => "equality",
+            .notEquality => "in-equality",
+            .bOr => "binary-or",
+            .bAnd => "binary-and",
+            .greater => "greater-than",
+            .greaterEqual => "greater-than-or-equal",
+            .less => "less-than",
+            .lessEqual => "less-equal",
+            .add => "addition",
+            .subtract => "subtraction",
+            .multiply => "multiplication",
+            .divide => "division",
+            .modulo => "modulo",
+        };
+    }
 };
 
 pub const UnaryExprType = enum {

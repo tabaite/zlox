@@ -154,7 +154,7 @@ pub const Error = union(enum) {
             .argumentTypeCannotBeVoid => _ = try out.write("arguments must not be type 'void'"),
 
             .incompatibleTypeUnary => _ = try out.write("incompatible type (unary)"),
-            .incompatibleTypeBinary => _ = try out.write("incompatible type (binary)"),
+            .incompatibleTypeBinary => |b| try out.print("cannot perform operation {s} on operands of type {s} and {s}", .{ b.operation.asVerb(), b.lhsType.asString(), b.rhsType.asString() }),
             .incompatibleTypeInitialValue => _ = try out.write("incompatible type (initial value)"),
             .incompatibleTypeReturn => _ = try out.write("incompatible type (return value)"),
             .argumentTypeIncorrect => _ = try out.write("incompatible type (provided argument)"),

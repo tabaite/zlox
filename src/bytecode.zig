@@ -106,6 +106,16 @@ pub const Type = enum(u32) {
     errorType,
     // this is for user classes, but i'll deal with that later
     // _,
+
+    pub fn asString(self: Type) []const u8 {
+        return switch (self) {
+            .nil => "nil",
+            .number, .numberLit => "number",
+            .string => "string",
+            .bool, .boolLit => "bool",
+            .errorType => "error type (any)",
+        };
+    }
 };
 
 // Any declaration where the type is not known, or where the type cannot be inferred from its
