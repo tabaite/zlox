@@ -1,6 +1,6 @@
 fun main() {
     var pi = 3.14159265;
-    var height = ;
+    var height = 12;
     {
         var length = pi * 2;
     }

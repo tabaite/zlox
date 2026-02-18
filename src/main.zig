@@ -171,7 +171,8 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
                 break :a .{ line, tokPosInt - lineInt, whereSrc.len };
             } else {
                 const line = iter.getLineWithEOF();
-                break :a .{ line, line.len, 1 };
+                // shhh this prevents underflow
+                break :a if (line.len > 0) .{ line, line.len - 1, 1 } else .{ @constCast(" "), 0, 1 };
             }
         };
         const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };

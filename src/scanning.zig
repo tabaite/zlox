@@ -152,13 +152,20 @@ pub const Token = struct {
 
 pub const TokenContext = struct {
     token: ?Token,
+    newPos: u32,
     lineNumber: u32,
 };
 inline fn tok(ty: TokenType, start: u32, end: u32, lineNumber: u32) TokenContext {
-    return .{ .token = .{ .tokenType = ty, .sourceStart = start, .sourceEndExclusive = end }, .lineNumber = lineNumber };
+    return .{ .token = .{ .tokenType = ty, .sourceStart = start, .sourceEndExclusive = end }, .newPos = end, .lineNumber = lineNumber };
+}
+inline fn str(strStart: u32, strEnd: u32, newPos: u32, lineNumber: u32) TokenContext {
+    return .{ .token = .{ .tokenType = .string, .sourceStart = strStart, .sourceEndExclusive = strEnd }, .newPos = newPos, .lineNumber = lineNumber };
+}
+inline fn utstr(strStart: u32, strEnd: u32, newPos: u32, lineNumber: u32) TokenContext {
+    return .{ .token = .{ .tokenType = .unterminatedString, .sourceStart = strStart, .sourceEndExclusive = strEnd }, .newPos = newPos, .lineNumber = lineNumber };
 }
 inline fn nulltok(lineNumber: u32) TokenContext {
-    return .{ .token = null, .lineNumber = lineNumber };
+    return .{ .token = null, .newPos = 211111, .lineNumber = lineNumber };
 }
 
 pub const TokenIterator = struct {
@@ -212,9 +219,9 @@ pub const TokenIterator = struct {
     }
 
     pub fn next(self: *TokenIterator, log: *ErrorLog) ?Token {
-        const token = self.peek(log);
-        if (token) |t| {
-            self.position = t.sourceEndExclusive;
+        const result = self.peekInternal(log);
+        if (result.token) |t| {
+            self.position = result.newPos;
             return t;
         } else {
             return null;
@@ -222,9 +229,14 @@ pub const TokenIterator = struct {
     }
 
     pub fn peek(self: *TokenIterator, log: *ErrorLog) ?Token {
+        const tk = self.peekInternal(log);
+        return tk.token;
+    }
+
+    fn peekInternal(self: *TokenIterator, log: *ErrorLog) TokenContext {
         const result = self.scan();
         if (result.token) |token| {
-            return switch (token.tokenType) {
+            const t = switch (token.tokenType) {
                 .invalidChar => inv: {
                     log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result);
                     break :inv token;
@@ -235,8 +247,9 @@ pub const TokenIterator = struct {
                 },
                 else => token,
             };
+            return TokenContext{ .token = t, .lineNumber = result.lineNumber, .newPos = result.newPos };
         } else {
-            return null;
+            return result;
         }
     }
 
@@ -286,7 +299,7 @@ pub const TokenIterator = struct {
 
                     end += 1;
                 }
-                return tok(.number, @truncate(i), @truncate(self.source.len), lineNumber);
+                return tok(.number, @truncate(i), @truncate(end), lineNumber);
             }
 
             const cnext = if (i >= self.source.len - 1) 'a' else self.source[i + 1];
@@ -315,17 +328,20 @@ pub const TokenIterator = struct {
                 // string literals
                 '"' => {
                     const start = if (i + 1 > self.source.len) self.source.len else i + 1;
-                    for (start..self.source.len) |j| {
-                        const sscurrent = self.source[j];
+                    var end = start;
+                    while (end < self.source.len) {
+                        const sscurrent = self.source[end];
                         if (sscurrent == '\n') {
                             lineNumber += 1;
                         }
                         if (sscurrent == '"') {
-                            return tok(.string, @truncate(i), @truncate(j), lineNumber);
+                            const res = str(@truncate(start), @truncate(end), @truncate(end + 1), lineNumber);
+                            return res;
                         }
+                        end += 1;
                     }
                     // error but we'll get there
-                    const res = tok(.unterminatedString, @truncate(i), @truncate(self.source.len), lineNumber);
+                    const res = utstr(@truncate(start), @truncate(end), @truncate(end + 1), lineNumber);
                     return res;
                 },
 
@@ -458,16 +474,16 @@ pub fn printToken(iter: *TokenIterator, token: Token, out: std.io.AnyWriter) !vo
         .tyVoid => try out.write("TYPE void null\n"),
 
         .number => {
-            const str = iter.exchangeTokenForSource(token);
-            try out.print("NUMBER {s} <NUMBER>\n", .{str});
+            const src = iter.exchangeTokenForSource(token);
+            try out.print("NUMBER {s} <NUMBER>\n", .{src});
         },
         .string => {
-            const str = iter.exchangeTokenForSource(token);
-            try out.print("STRING \"{s}\" {s}\n", .{ str, str });
+            const src = iter.exchangeTokenForSource(token);
+            try out.print("STRING \"{s}\" {s}\n", .{ src, src });
         },
         .identifier => {
-            const str = iter.exchangeTokenForSource(token);
-            try out.print("IDENTIFIER {s} null\n", .{str});
+            const src = iter.exchangeTokenForSource(token);
+            try out.print("IDENTIFIER {s} null\n", .{src});
         },
         else => unreachable,
     };
