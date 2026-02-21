@@ -161,28 +161,37 @@ pub fn main() !void {
 fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !void {
     const iter = ctx.tokenIterator;
 
-    const whereSrc = if (trace.where) |where| iter.exchangeTokenForSource(where) else "";
-    {
-        const line: []u8, const hlOffset, const hlLen = a: {
-            if (trace.where) |where| {
-                const line = iter.exchangeTokenForLine(where);
+    const line: []u8, const hlOffset, const hlLen = a: {
+        switch (trace.where) {
+            .token => |t| {
+                const whereSrc = iter.exchangeTokenForSource(t.t);
+                const tok = t.t;
+                const line = iter.exchangeTokenForLine(tok);
                 const lineInt = @intFromPtr(line.ptr);
                 const tokPosInt = @intFromPtr(whereSrc.ptr);
                 break :a .{ line, tokPosInt - lineInt, whereSrc.len };
-            } else {
+            },
+            .sourceRange => |s| {
+                const end = @min(s.endPossiblyOOB, @as(u32, @intCast(iter.source.len)));
+                const line = iter.getSourceLinesInRange(s.start, end);
+                const hlOffset = @as(u32, @truncate(@intFromPtr(line.ptr))) - s.start;
+                const hlLen = end - s.start;
+                break :a .{ line, hlOffset, hlLen };
+            },
+            .eof => {
                 const line = iter.getLineWithEOF();
                 // shhh this prevents underflow
                 break :a if (line.len > 0) .{ line, line.len - 1, 1 } else .{ @constCast(" "), 0, 1 };
-            }
-        };
-        const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };
-        try out.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
-        try out.print("{d}: ", .{trace.lineNumber});
-        _ = try out.write("\x1b[31;1m");
-        try out.writeByteNTimes('-', hlOffset);
-        try out.writeByteNTimes('^', hlLen);
-        _ = try out.write("\x1b[0m\n");
-    }
+            },
+        }
+    };
+    const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };
+    try out.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
+    try out.print("{d}: ", .{trace.lineNumber});
+    _ = try out.write("\x1b[31;1m");
+    try out.writeByteNTimes('-', hlOffset);
+    try out.writeByteNTimes('^', hlLen);
+    _ = try out.write("\x1b[0m\n");
 
     try trace.err.printSelf(out);
     try out.writeByteNTimes('\n', 2);

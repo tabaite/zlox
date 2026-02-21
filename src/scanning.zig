@@ -173,15 +173,11 @@ pub const TokenIterator = struct {
     position: usize = 0,
     lineNumber: u32 = 1,
 
-    pub fn exchangeTokenForSource(self: *TokenIterator, token: Token) []u8 {
-        return self.source[token.sourceStart..token.sourceEndExclusive];
-    }
-
-    pub fn exchangeTokenForLine(self: *TokenIterator, token: Token) []u8 {
+    pub fn getSourceLinesInRange(self: *TokenIterator, start: u32, endExclusive: u32) []u8 {
         const lineStart = s: {
             // the token's start can never be a new line, so it's fine
-            for (1..token.sourceStart + 1) |ii| {
-                const idx: usize = @as(usize, @intCast(token.sourceStart)) - ii;
+            for (1..start + 1) |ii| {
+                const idx: usize = @as(usize, @intCast(start)) - ii;
                 if (self.source[idx] == '\n') {
                     break :s idx + 1;
                 }
@@ -190,7 +186,7 @@ pub const TokenIterator = struct {
         };
         const lineEnd = s: {
             // the token's start can never be a new line, so it's fine
-            for (token.sourceEndExclusive..self.source.len) |idx| {
+            for (endExclusive..self.source.len) |idx| {
                 if (self.source[idx] == '\n') {
                     break :s idx;
                 }
@@ -198,6 +194,14 @@ pub const TokenIterator = struct {
             break :s self.source.len;
         };
         return self.source[lineStart..lineEnd];
+    }
+
+    pub fn exchangeTokenForSource(self: *TokenIterator, token: Token) []u8 {
+        return self.source[token.sourceStart..token.sourceEndExclusive];
+    }
+
+    pub fn exchangeTokenForLine(self: *TokenIterator, token: Token) []u8 {
+        return self.getSourceLinesInRange(token.sourceStart, token.sourceEndExclusive);
     }
 
     pub fn getLineWithEOF(self: *TokenIterator) []u8 {

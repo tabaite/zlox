@@ -179,12 +179,17 @@ pub const Error = union(enum) {
 pub const ErrorTrace = struct {
     err: Error,
     // null means EOF
-    where: ?Token,
-    lineNumber: u32,
-};
-
-pub const ErrorContext = struct {
-    where: ?Token,
+    where: union(enum) {
+        eof,
+        token: struct {
+            t: Token,
+        },
+        sourceRange: struct {
+            start: u32,
+            /// We set this to max(u32) if the end provided is null.
+            endPossiblyOOB: u32,
+        },
+    },
     lineNumber: u32,
 };
 
@@ -201,7 +206,24 @@ pub const ErrorLog = struct {
     }
 
     pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
-        const trace: ErrorTrace = .{ .err = err, .where = context.token, .lineNumber = context.lineNumber };
+        const trace: ErrorTrace = .{ .err = err, .where = if (context.token) |t| .{ .token = .{ .t = t } } else .eof, .lineNumber = context.lineNumber };
+        self.backing[self.used] = trace;
+        self.used += 1;
+    }
+
+    pub fn pushTokenRange(self: *ErrorLog, err: Error, start: TokenContext, end: TokenContext) void {
+        const u32Max = std.math.maxInt(u32);
+        const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
+        const rangeEnd = if (end.token) |t| t.sourceEndExclusive else u32Max;
+        const trace: ErrorTrace = .{ .err = err, .where = .{ .sourceRange = .{ .start = rangeStart, .endPossiblyOOB = rangeEnd } }, .lineNumber = start.lineNumber };
+        self.backing[self.used] = trace;
+        self.used += 1;
+    }
+    pub fn pushTokenRangeEndExlusive(self: *ErrorLog, err: Error, start: TokenContext, endExclusive: TokenContext) void {
+        const u32Max = std.math.maxInt(u32);
+        const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
+        const rangeEnd = if (endExclusive.token) |t| t.sourceStart else u32Max;
+        const trace: ErrorTrace = .{ .err = err, .where = .{ .sourceRange = .{ .start = rangeStart, .endPossiblyOOB = rangeEnd } }, .lineNumber = start.lineNumber };
         self.backing[self.used] = trace;
         self.used += 1;
     }
