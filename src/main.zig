@@ -106,7 +106,7 @@ pub fn main() !void {
             // an expression can never be less than 1 token
             var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
 
-            try parsing.parseAndCompileAll(ctx, &codegen);
+            parsing.parseAndCompileAll(ctx, &codegen);
 
             const errs = errLog.recover();
             if (errs != null) {
@@ -125,7 +125,7 @@ pub fn main() !void {
 
             _ = try stderr.write("\nbytecode:\n");
 
-            try parsing.parseAndCompileAll(ctx, &codegen);
+            parsing.parseAndCompileAll(ctx, &codegen);
 
             const errs = errLog.recover();
             if (errs != null) {

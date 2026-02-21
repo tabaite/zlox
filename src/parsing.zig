@@ -112,18 +112,18 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context) ?Token {
 // Each rule, described by the table above is a function.
 // The function mutates the state of the parser, moving the position forward
 // to the token immediately after the expression it returns.
-pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) !void {
+pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) void {
     const iter = ctx.tokenIterator;
     const log = ctx.log;
     while (iter.peek(log)) |_| {
-        try functionDeclarationRule(ctx, codegen);
+        functionDeclarationRule(ctx, codegen);
     }
     // If there is no active function, this is a no-op.
     // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
     codegen.exitFunction(ctx);
 }
 
-fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) !void {
+fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     const iter = ctx.tokenIterator;
     _ = filterCurrentTokenOrErr(.kwFun, ctx);
     advance(ctx);
@@ -244,17 +244,17 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) !void {
         const funName = iter.exchangeTokenForSource(funNameT);
         codegen.enterFunction(ctx, funName, args[0..argCount], retType);
         // Function body
-        _ = try blockRule(ctx, codegen);
+        _ = blockRule(ctx, codegen);
         codegen.exitFunction(ctx);
     }
 }
 
-fn blockRule(ctx: Context, codegen: *CodeGen) Allocator.Error!BlockReturnInfo {
+fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     _ = filterCurrentTokenOrErr(.leftBrace, ctx);
     advance(ctx);
 
     codegen.enterScope();
-    const retInfo = try blockBodyRule(ctx, codegen);
+    const retInfo = blockBodyRule(ctx, codegen);
 
     _ = filterCurrentTokenOrErr(.rightBrace, ctx);
     codegen.exitScope();
@@ -262,21 +262,21 @@ fn blockRule(ctx: Context, codegen: *CodeGen) Allocator.Error!BlockReturnInfo {
     return retInfo;
 }
 
-fn blockBodyRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+fn blockBodyRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     var blockRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = false };
     while (peek(ctx)) |t| {
         const subblockRetInfo: BlockReturnInfo = switch (t.tokenType) {
-            .leftBrace => try blockRule(ctx, codegen),
+            .leftBrace => blockRule(ctx, codegen),
             .rightBrace => return blockRetInfo,
-            else => try statementRule(ctx, codegen),
+            else => statementRule(ctx, codegen),
         };
         blockRetInfo.returnsOnAllPaths = blockRetInfo.returnsOnAllPaths or subblockRetInfo.returnsOnAllPaths;
     }
     return blockRetInfo;
 }
 
-fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
-    const blockRetInfo = try returnRule(ctx, codegen);
+fn statementRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
+    const blockRetInfo = returnRule(ctx, codegen);
 
     const semicolonMatchOrNull = filterCurrentTokenOrErr(.semicolon, ctx);
     if (semicolonMatchOrNull != null) {
@@ -285,22 +285,22 @@ fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
     return blockRetInfo;
 }
 
-fn returnRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+fn returnRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     const ret = peek(ctx);
     if (toi(ret).tokenType != .kwReturn) {
-        try declarationRule(ctx, codegen);
+        declarationRule(ctx, codegen);
         return .{ .returnsOnAllPaths = false };
     }
     advance(ctx);
-    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen));
+    codegen.insertFunctionReturn(ctx, expressionRule(ctx, codegen));
     return .{ .returnsOnAllPaths = true };
 }
 
-fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
+fn declarationRule(ctx: Context, codegen: *CodeGen) void {
     const iter = ctx.tokenIterator;
     const decl = peek(ctx);
     if (toi(decl).tokenType != .kwVar) {
-        _ = try expressionRule(ctx, codegen);
+        _ = expressionRule(ctx, codegen);
         return;
     }
     advance(ctx);
@@ -332,7 +332,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
                     .semicolon => break :val null,
                     .equal => {
                         advance(ctx);
-                        break :val try expressionRule(ctx, codegen);
+                        break :val expressionRule(ctx, codegen);
                     },
                     else => {
                         ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon, .found = next } });
@@ -349,7 +349,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
         .equal => {
             advance(ctx);
             if (nameTokenOrNull) |nameToken| {
-                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen) });
+                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = expressionRule(ctx, codegen) });
             }
             return;
         },
@@ -361,70 +361,70 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
     }
 }
 
-fn expressionRule(ctx: Context, codegen: *CodeGen) Allocator.Error!Handle {
+fn expressionRule(ctx: Context, codegen: *CodeGen) Handle {
     if (toi(peek(ctx)).tokenType == .semicolon) {
         ctx.pushError(.expectedExpression);
         return .ERR;
     }
-    return try orRule(ctx, codegen);
+    return orRule(ctx, codegen);
 }
 
 // might be the most atrocious function body i've ever written
-fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen) Allocator.Error!Handle) !Handle {
-    var expression = try previousRule(ctx, codegen);
+fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen) Handle) Handle {
+    var expression = previousRule(ctx, codegen);
     while (peek(ctx)) |tok| {
         const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
 
         advance(ctx);
 
-        const right = try previousRule(ctx, codegen);
+        const right = previousRule(ctx, codegen);
 
         expression = codegen.pushBinaryOperation(ctx, operation, expression, right);
     }
     return expression;
 }
-fn orRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn orRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
     return binaryRule(ctx, codegen, matches, andRule);
 }
-fn andRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn andRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
     return binaryRule(ctx, codegen, matches, equalityRule);
 }
-fn equalityRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn equalityRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
     return binaryRule(ctx, codegen, matches, comparisonRule);
 }
-fn comparisonRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn comparisonRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
     return binaryRule(ctx, codegen, matches, termRule);
 }
-fn termRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn termRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
     return binaryRule(ctx, codegen, matches, factorRule);
 }
-fn factorRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn factorRule(ctx: Context, codegen: *CodeGen) Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
     return binaryRule(ctx, codegen, matches, unaryRule);
 }
-fn unaryRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn unaryRule(ctx: Context, codegen: *CodeGen) Handle {
     const opToken = peek(ctx);
 
     const operation: UnaryExprType = switch (toi(opToken).tokenType) {
         .bang => .negateBool,
         .minus => .negate,
-        else => return try functionCallOrVariableOrAssignmentRule(ctx, codegen),
+        else => return functionCallOrVariableOrAssignmentRule(ctx, codegen),
     };
 
     advance(ctx);
 
-    const right = try unaryRule(ctx, codegen);
+    const right = unaryRule(ctx, codegen);
 
     return codegen.pushUnaryOperation(ctx, operation, right);
 }
 
 // Calls and variable usages both start with an identifier, so they're combined into one rule.
-fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Handle {
     const iter = ctx.tokenIterator;
 
     const name = peek(ctx) orelse return primaryRule(ctx, codegen);
@@ -448,7 +448,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
                     break;
                 }
 
-                args[argNums] = try expressionRule(ctx, codegen);
+                args[argNums] = expressionRule(ctx, codegen);
                 argNums += 1;
 
                 switch (toi(peek(ctx)).tokenType) {
@@ -481,7 +481,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
         .equal => {
             advance(ctx);
 
-            const item = try expressionRule(ctx, codegen);
+            const item = expressionRule(ctx, codegen);
             return codegen.updateVariable(ctx, iter.exchangeTokenForSource(name), item);
         },
         else => {
@@ -490,14 +490,14 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
     }
 }
 
-fn primaryRule(ctx: Context, codegen: *CodeGen) !Handle {
+fn primaryRule(ctx: Context, codegen: *CodeGen) Handle {
     const iter = ctx.tokenIterator;
     const tok = toi(peek(ctx));
 
     const result = switch (tok.tokenType) {
         .leftParen => grouping: {
             advance(ctx);
-            const expr = try expressionRule(ctx, codegen);
+            const expr = expressionRule(ctx, codegen);
 
             // current will be the token following expr
             _ = filterCurrentTokenOrErr(.rightParen, ctx);
