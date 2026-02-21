@@ -120,7 +120,7 @@ pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) !void {
     }
     // If there is no active function, this is a no-op.
     // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
-    try codegen.exitFunction(ctx);
+    codegen.exitFunction(ctx);
 }
 
 fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) !void {
@@ -242,10 +242,10 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) !void {
     };
     if (funNameTOrNull) |funNameT| {
         const funName = iter.exchangeTokenForSource(funNameT);
-        try codegen.enterFunction(ctx, funName, args[0..argCount], retType);
+        codegen.enterFunction(ctx, funName, args[0..argCount], retType);
         // Function body
         _ = try blockRule(ctx, codegen);
-        try codegen.exitFunction(ctx);
+        codegen.exitFunction(ctx);
     }
 }
 
@@ -257,7 +257,7 @@ fn blockRule(ctx: Context, codegen: *CodeGen) Allocator.Error!BlockReturnInfo {
     const retInfo = try blockBodyRule(ctx, codegen);
 
     _ = filterCurrentTokenOrErr(.rightBrace, ctx);
-    try codegen.exitScope();
+    codegen.exitScope();
     advance(ctx);
     return retInfo;
 }
@@ -292,7 +292,7 @@ fn returnRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
         return .{ .returnsOnAllPaths = false };
     }
     advance(ctx);
-    try codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen));
+    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen));
     return .{ .returnsOnAllPaths = true };
 }
 
@@ -342,14 +342,14 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) !void {
             };
 
             if (nameTokenOrNull) |nameToken| {
-                _ = try codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
+                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
             }
             return;
         },
         .equal => {
             advance(ctx);
             if (nameTokenOrNull) |nameToken| {
-                _ = try codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen) });
+                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen) });
             }
             return;
         },
@@ -379,7 +379,7 @@ fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenTo
 
         const right = try previousRule(ctx, codegen);
 
-        expression = try codegen.pushBinaryOperation(ctx, operation, expression, right);
+        expression = codegen.pushBinaryOperation(ctx, operation, expression, right);
     }
     return expression;
 }
@@ -420,13 +420,15 @@ fn unaryRule(ctx: Context, codegen: *CodeGen) !Handle {
 
     const right = try unaryRule(ctx, codegen);
 
-    return try codegen.pushUnaryOperation(ctx, operation, right);
+    return codegen.pushUnaryOperation(ctx, operation, right);
 }
 
 // Calls and variable usages both start with an identifier, so they're combined into one rule.
 fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Handle {
     const iter = ctx.tokenIterator;
+
     const name = peek(ctx) orelse return primaryRule(ctx, codegen);
+
     if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
         return primaryRule(ctx, codegen);
     }
@@ -453,7 +455,12 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
                     .comma => {},
                     .rightParen => break,
                     // The argument expression is malformed, no running done
-                    .semicolon => return .ERR,
+                    // foo(45;
+                    // ------^ expected rightParen, found semicolon
+                    .semicolon => {
+                        _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
+                        return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+                    },
                     else => {
                         // hacky but it works
                         _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
@@ -469,13 +476,13 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) !Hand
 
             _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
             advance(ctx);
-            return try codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+            return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
         },
         .equal => {
             advance(ctx);
 
             const item = try expressionRule(ctx, codegen);
-            return try codegen.updateVariable(ctx, iter.exchangeTokenForSource(name), item);
+            return codegen.updateVariable(ctx, iter.exchangeTokenForSource(name), item);
         },
         else => {
             return codegen.getVariable(ctx, iter.exchangeTokenForSource(name));
@@ -498,7 +505,7 @@ fn primaryRule(ctx: Context, codegen: *CodeGen) !Handle {
             break :grouping expr;
         },
         .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, iter.exchangeTokenForSource(tok)) catch 0),
-        .string => try codegen.newStringLit(iter.exchangeTokenForSource(tok)),
+        .string => codegen.newStringLit(iter.exchangeTokenForSource(tok)),
         .kwNil => CodeGen.newNilLit(),
         .kwTrue => comptime CodeGen.newBoolLit(true),
         .kwFalse => comptime CodeGen.newBoolLit(false),

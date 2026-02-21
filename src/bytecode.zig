@@ -176,6 +176,14 @@ const CurrentFunctionContext = struct {
     returnsOnAllPaths: bool,
 };
 
+/// That's right. Running out of memory IS a fatal error and you can't change my mind.
+/// It's not like the old code did anything except bubble the error up to main anyways.
+/// This will allow us to operate with errors as "interupts" without the error space
+/// being polluted by OutOfMemory.
+pub fn allocatorMust(T: type, result: Allocator.Error!T) T {
+    return result catch @panic("Interpreter backend ran out of memory.");
+}
+
 pub const BytecodeGenerator = struct {
     const FunctionType = struct {
         args: []ArgInfo,
@@ -241,7 +249,7 @@ pub const BytecodeGenerator = struct {
         self.stringBuffer.deinit(self.allocator);
     }
 
-    pub fn enterFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []ArgInfo, retType: Type) !void {
+    pub fn enterFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []ArgInfo, retType: Type) void {
         if (self.currentFunction != null) {
             @panic("Nested function parsed! This should not happen due to parsing restrictions");
         }
@@ -258,11 +266,11 @@ pub const BytecodeGenerator = struct {
 
         for (0..args.len) |i| {
             const arg = args[i];
-            try self.variableRegistry.put(
+            allocatorMust(void, self.variableRegistry.put(
                 self.allocator,
                 arg.name,
                 .{ .type = arg.type, .operand = .{ .item = @as(u64, @intCast(self.stackHeight)) + @as(u64, @intCast(i)) } },
-            );
+            ));
 
             const ty = switch (arg.type) {
                 .nil => "void",
@@ -286,7 +294,7 @@ pub const BytecodeGenerator = struct {
         std.debug.print(") RETURNS {s}\n", .{ty});
 
         // When the function exits, then we will release this memory.
-        const argsDuped = try self.allocator.dupe(ArgInfo, args);
+        const argsDuped = allocatorMust([]ArgInfo, self.allocator.dupe(ArgInfo, args));
         const func: CurrentFunctionContext = .{
             .start = self.bytecodeList.items.len,
             .args = argsDuped,
@@ -297,15 +305,14 @@ pub const BytecodeGenerator = struct {
         self.currentFunction = func;
     }
 
-    pub fn exitFunction(self: *BytecodeGenerator, ctx: Context) !void {
+    pub fn exitFunction(self: *BytecodeGenerator, ctx: Context) void {
         defer self.currentFunction = null;
-        if (self.currentFunction != null) {
-            const f = self.currentFunction.?;
+        if (self.currentFunction) |f| {
             if (!f.returnsOnAllPaths) {
                 if (f.retType != .nil) {
                     std.debug.print("NOT ALL CODE PATHS IN FUNCTION {s} RETURN\n", .{f.name});
                 } else {
-                    try self.insertFunctionReturn(ctx, .NIL);
+                    self.insertFunctionReturn(ctx, .NIL);
                 }
             }
             for (f.args) |arg| {
@@ -315,7 +322,7 @@ pub const BytecodeGenerator = struct {
             self.stackHeight -= @truncate(f.args.len);
 
             const func: FunctionType = .{ .args = f.args, .retType = f.retType, .start = f.start };
-            try self.functionRegistry.put(self.allocator, f.name, func);
+            allocatorMust(void, self.functionRegistry.put(self.allocator, f.name, func));
         }
     }
 
@@ -323,18 +330,18 @@ pub const BytecodeGenerator = struct {
         self.scopeExtentStack.push(.{});
     }
 
-    pub fn exitScope(self: *BytecodeGenerator) !void {
+    pub fn exitScope(self: *BytecodeGenerator) void {
         const num: ScopeExtent = self.scopeExtentStack.pop() orelse .{};
         for (0..num.numVars) |_| {
             const name = self.scopeNamesStack.pop() orelse break;
             _ = self.variableRegistry.remove(name);
         }
         for (0..num.numItems) |_| {
-            try self.popFromStack();
+            self.popFromStack();
         }
     }
 
-    pub fn callFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []HandledOperand) !HandledOperand {
+    pub fn callFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []HandledOperand) HandledOperand {
         const func = self.functionRegistry.get(name) orelse {
             ctx.pushError(.{ .functionNotDefined = .{ .name = name } });
             return .ERR;
@@ -366,27 +373,27 @@ pub const BytecodeGenerator = struct {
                 ctx.pushError(.{ .argumentTypeIncorrect = .{ .found = argDecayedType, .expected = defArg.type } });
             }
 
-            try self.bytecodeList.append(self.allocator, Instruction{
+            allocatorMust(void, self.bytecodeList.append(self.allocator, Instruction{
                 .op = .{ .argType = argType, .op = .pushArgument },
                 .a = arg.operand,
                 .b = .NULL_HANDLE,
                 .dest = 0,
-            });
+            }));
         }
-        try self.bytecodeList.append(self.allocator, Instruction{
+        allocatorMust(void, self.bytecodeList.append(self.allocator, Instruction{
             .op = .{ .argType = .bothHandle, .op = .call },
             .a = .{ .item = @intCast(func.start) },
             .b = .NULL_HANDLE,
             .dest = 0,
-        });
+        }));
         return HandledOperand{ .type = func.retType, .operand = .RET_HANDLE };
     }
 
-    pub fn registerVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, typeInfo: NewVariableTypeInfo) !HandledOperand {
-        const res = try self.variableRegistry.getOrPut(self.allocator, name);
+    pub fn registerVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, typeInfo: NewVariableTypeInfo) HandledOperand {
+        const res = allocatorMust(std.StringHashMapUnmanaged(HandledOperand).GetOrPutResult, self.variableRegistry.getOrPut(self.allocator, name));
         if (!res.found_existing) {
             self.scopeNamesStack.push(name);
-            const handle = try self.pushOperand(ctx, name, typeInfo);
+            const handle = self.pushOperand(ctx, name, typeInfo);
             const scopeVarCount = self.scopeExtentStack.top();
             if (scopeVarCount != null) {
                 (scopeVarCount orelse unreachable).numVars += 1;
@@ -405,22 +412,20 @@ pub const BytecodeGenerator = struct {
         };
     }
 
-    pub fn updateVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, new: HandledOperand) !HandledOperand {
+    pub fn updateVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, new: HandledOperand) HandledOperand {
         const handle = self.variableRegistry.getPtr(name) orelse {
             ctx.pushError(.{ .variableNotDefined = .{ .name = name } });
             return .ERR;
         };
-        const oldType = handle.type;
         handle.type = switch (new.type) {
             .boolLit => .bool,
             .numberLit => .number,
             else => |s| s,
         };
-        errdefer handle.type = oldType;
-        return try self.moveOperand(new, handle.*);
+        return self.moveOperand(new, handle.*);
     }
 
-    pub fn insertFunctionReturn(self: *BytecodeGenerator, ctx: Context, val: HandledOperand) !void {
+    pub fn insertFunctionReturn(self: *BytecodeGenerator, ctx: Context, val: HandledOperand) void {
         const f = self.currentFunction orelse return;
         self.currentFunction.?.returnsOnAllPaths = true;
         if (val.type != f.retType) {
@@ -429,12 +434,12 @@ pub const BytecodeGenerator = struct {
         }
         if (f.retType != .nil) {
             const ret = HandledOperand{ .type = f.retType, .operand = RawOperand.RET_HANDLE };
-            _ = try self.moveOperand(val, ret);
+            _ = self.moveOperand(val, ret);
         }
-        try self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 });
+        allocatorMust(void, self.bytecodeList.append(self.allocator, Instruction{ .op = .{ .op = .ret, .argType = .bothHandle }, .a = .NULL_HANDLE, .b = .NULL_HANDLE, .dest = 0 }));
     }
 
-    pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) !HandledOperand {
+    pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) HandledOperand {
         switch (dest.type) {
             .boolLit, .numberLit => @panic("Trying to move into a literal..? (this should not happen due to parsing)"),
             else => {},
@@ -449,23 +454,23 @@ pub const BytecodeGenerator = struct {
             else => |s| s,
         };
         const ins: Instruction = .{ .op = .{ .argType = argType, .op = .move }, .a = item.operand, .b = RawOperand.NULL_HANDLE, .dest = @truncate(dest.operand.item) };
-        try self.bytecodeList.append(self.allocator, ins);
+        allocatorMust(void, self.bytecodeList.append(self.allocator, ins));
         return .{ .type = retType, .operand = dest.operand };
     }
 
-    pub fn popFromStack(self: *BytecodeGenerator) !void {
+    pub fn popFromStack(self: *BytecodeGenerator) void {
         self.stackHeight -= 1;
-        try self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 });
+        allocatorMust(void, self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 }));
     }
     // name is only used for debugging currently
-    pub fn pushOperand(self: *BytecodeGenerator, ctx: Context, debugName: []u8, info: NewVariableTypeInfo) !HandledOperand {
+    pub fn pushOperand(self: *BytecodeGenerator, ctx: Context, debugName: []u8, info: NewVariableTypeInfo) HandledOperand {
         // This can store any (built-in) type.
         const variableSize = 1;
         const InitializeInformation = struct { value: HandledOperand, type: Type };
         const typeInfo: InitializeInformation = switch (info) {
             .provided => |t| .{ .value = t.initial orelse zero: {
                 switch (t.type) {
-                    .string => break :zero try self.newStringLit(""),
+                    .string => break :zero self.newStringLit(""),
                     else => |ty| break :zero .{ .operand = .{ .item = 0 }, .type = ty },
                 }
             }, .type = t.type },
@@ -516,14 +521,14 @@ pub const BytecodeGenerator = struct {
                 // Dest is unused, but we set it to the stack height just for convenience purposes
                 const variable = Instruction{ .op = .{ .argType = arg, .op = .pushItem }, .a = .{ .item = n }, .b = .{ .item = variableSize }, .dest = self.stackHeight };
                 self.stackHeight += variableSize;
-                try self.bytecodeList.append(self.allocator, variable);
+                allocatorMust(void, self.bytecodeList.append(self.allocator, variable));
 
                 break :h .{ .operand = .{ .item = @as(u64, start) }, .type = decayedType };
             },
         };
     }
 
-    pub fn pushBinaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) !HandledOperand {
+    pub fn pushBinaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) HandledOperand {
         const InsInfo = struct {
             op: Operation,
             dest: HandledOperand,
@@ -579,15 +584,15 @@ pub const BytecodeGenerator = struct {
             };
 
             const newVar: NewVariableTypeInfo = .{ .provided = .{ .type = info.retType, .initial = null } };
-            const dest = try self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), newVar);
+            const dest = self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), newVar);
             break :r .{ .op = .{ .op = info.op, .argType = @as(ArgTypes, @enumFromInt(argFlag)) }, .dest = dest };
         };
         const item = Instruction{ .op = res.op, .a = a.operand, .b = b.operand, .dest = @truncate(res.dest.operand.item) };
-        try self.bytecodeList.append(self.allocator, item);
+        allocatorMust(void, self.bytecodeList.append(self.allocator, item));
         return res.dest;
     }
 
-    pub fn pushUnaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.UnaryExprType, a: HandledOperand) !HandledOperand {
+    pub fn pushUnaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.UnaryExprType, a: HandledOperand) HandledOperand {
         const res: Operation = switch (op) {
             .negate => switch (a.type) {
                 .number => .{ .op = .negateNumber, .argType = .bothHandle },
@@ -606,26 +611,26 @@ pub const BytecodeGenerator = struct {
                 },
             },
         };
-        const dest = try self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), .{ .provided = .{ .type = a.type, .initial = a } });
+        const dest = self.pushOperand(ctx, @constCast("TEMP TEMP TEMP TEMP"), .{ .provided = .{ .type = a.type, .initial = a } });
         const item = Instruction{ .op = res, .a = a.operand, .b = .NULL_HANDLE, .dest = @truncate(dest.operand.item) };
-        try self.bytecodeList.append(self.allocator, item);
+        allocatorMust(void, self.bytecodeList.append(self.allocator, item));
         return dest;
     }
-    pub fn newStringLit(self: *BytecodeGenerator, string: []u8) !HandledOperand {
+    pub fn newStringLit(self: *BytecodeGenerator, string: []u8) HandledOperand {
         // allocate shit ig
         const strStart = self.stringBuffer.items.len;
-        try self.stringBuffer.appendSlice(self.allocator, string);
+        allocatorMust(void, self.stringBuffer.appendSlice(self.allocator, string));
 
         const start = self.stackHeight;
         self.stackHeight += 2 * @sizeOf(u64);
         const ptr = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(strStart) }, .b = .{ .item = 8 }, .dest = 0 };
-        try self.bytecodeList.append(self.allocator, ptr);
+        allocatorMust(void, self.bytecodeList.append(self.allocator, ptr));
         const len = Instruction{ .op = .{ .argType = .bothHandle, .op = .pushItem }, .a = .{ .item = @bitCast(string.len) }, .b = .{ .item = 8 }, .dest = 0 };
-        try self.bytecodeList.append(self.allocator, len);
+        allocatorMust(void, self.bytecodeList.append(self.allocator, len));
 
         const top = self.scopeExtentStack.top();
-        if (top != null) {
-            (top orelse unreachable).numItems += 2;
+        if (top) |t| {
+            t.numItems += 2;
         }
 
         return .{ .operand = .{ .item = @as(u64, start) }, .type = .string };

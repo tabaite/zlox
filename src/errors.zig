@@ -211,10 +211,10 @@ pub const ErrorLog = struct {
         self.used += 1;
     }
 
-    pub fn pushTokenRange(self: *ErrorLog, err: Error, start: TokenContext, end: TokenContext) void {
+    pub fn pushTokenRange(self: *ErrorLog, err: Error, start: TokenContext, endInclusive: TokenContext) void {
         const u32Max = std.math.maxInt(u32);
         const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
-        const rangeEnd = if (end.token) |t| t.sourceEndExclusive else u32Max;
+        const rangeEnd = if (endInclusive.token) |t| t.sourceEndExclusive else u32Max;
         const trace: ErrorTrace = .{ .err = err, .where = .{ .sourceRange = .{ .start = rangeStart, .endPossiblyOOB = rangeEnd } }, .lineNumber = start.lineNumber };
         self.backing[self.used] = trace;
         self.used += 1;
