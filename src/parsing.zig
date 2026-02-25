@@ -68,6 +68,13 @@ const BlockReturnInfo = struct {
     returnsOnAllPaths: bool,
 };
 
+const ParseInterruptSignal = error{
+    /// Any semicolon encountered within the parse MUST be interpreted as an immediate end to
+    /// the statement.
+    /// This signal can also be used for the end of a file.
+    ReachedEndOfStatement,
+};
+
 // HELPERS
 inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: []const TokenToBinaryExpr) ?BinaryExprType {
     inline for (matches) |t| {
@@ -76,6 +83,15 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
         }
     }
     return null;
+}
+
+/// returns an interrupt if the token is a semicolon or the eof.
+inline fn peekOrInterrupt(ctx: Context) ParseInterruptSignal!Token {
+    const t = ctx.tokenIterator.peek(ctx.log) orelse return ParseInterruptSignal.ReachedEndOfStatement;
+    if (t.tokenType == .semicolon) {
+        return ParseInterruptSignal.ReachedEndOfStatement;
+    }
+    return t;
 }
 
 inline fn peek(ctx: Context) ?Token {
@@ -282,38 +298,45 @@ fn statementRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     if (semicolonMatchOrNull != null) {
         advance(ctx);
     }
-    return blockRetInfo;
+    return blockRetInfo catch .{ .returnsOnAllPaths = true };
 }
 
-fn returnRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
-    const ret = peek(ctx);
-    if (toi(ret).tokenType != .kwReturn) {
-        declarationRule(ctx, codegen);
+fn returnRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!BlockReturnInfo {
+    const ret = try peekOrInterrupt(ctx);
+    if (ret.tokenType != .kwReturn) {
+        try declarationRule(ctx, codegen);
         return .{ .returnsOnAllPaths = false };
     }
     advance(ctx);
-    codegen.insertFunctionReturn(ctx, expressionRule(ctx, codegen));
+    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen));
     return .{ .returnsOnAllPaths = true };
 }
 
-fn declarationRule(ctx: Context, codegen: *CodeGen) void {
+fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
     const iter = ctx.tokenIterator;
-    const decl = peek(ctx);
-    if (toi(decl).tokenType != .kwVar) {
-        _ = expressionRule(ctx, codegen);
+    const decl = try peekOrInterrupt(ctx);
+    if (decl.tokenType != .kwVar) {
+        _ = try expressionRule(ctx, codegen);
         return;
     }
     advance(ctx);
 
-    const nameTokenOrNull = filterCurrentTokenOrErr(.identifier, ctx);
+    const nameToken = try peekOrInterrupt(ctx);
+    if (nameToken.tokenType != .identifier) {
+        ctx.pushError(.{ .expectedToken = .{ .expected = .identifier, .found = nameToken } });
+    }
 
     advance(ctx);
     switch (toi(peek(ctx)).tokenType) {
         .colon => {
             advance(ctx);
 
-            const typeToken = peek(ctx);
-            const varType: bytecode.Type = switch (toi(typeToken).tokenType) {
+            const typeToken = peekOrInterrupt(ctx) catch |e| {
+                // todo: fix
+                ctx.pushError(.{ .expectedTypeToken = .{ .found = null } });
+                return e;
+            };
+            const varType: bytecode.Type = switch (typeToken.tokenType) {
                 .tyBool => .bool,
                 .tyNum => .number,
                 .tyString => .string,
@@ -326,13 +349,15 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) void {
 
             advance(ctx);
 
-            const next = peek(ctx);
+            const next = peek(ctx) orelse return ParseInterruptSignal.ReachedEndOfStatement;
             const initialValue: ?Handle = val: {
-                switch (toi(next).tokenType) {
-                    .semicolon => break :val null,
+                switch (next.tokenType) {
                     .equal => {
                         advance(ctx);
-                        break :val expressionRule(ctx, codegen);
+                        break :val try expressionRule(ctx, codegen);
+                    },
+                    .semicolon => {
+                        break :val null;
                     },
                     else => {
                         ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon, .found = next } });
@@ -341,16 +366,12 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) void {
                 }
             };
 
-            if (nameTokenOrNull) |nameToken| {
-                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
-            }
+            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
             return;
         },
         .equal => {
             advance(ctx);
-            if (nameTokenOrNull) |nameToken| {
-                _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = expressionRule(ctx, codegen) });
-            }
+            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen) });
             return;
         },
         // Includes semicolon.
@@ -361,53 +382,53 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) void {
     }
 }
 
-fn expressionRule(ctx: Context, codegen: *CodeGen) Handle {
+fn expressionRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!Handle {
     if (toi(peek(ctx)).tokenType == .semicolon) {
         ctx.pushError(.expectedExpression);
         return .ERR;
     }
-    return orRule(ctx, codegen);
+    return try orRule(ctx, codegen);
 }
 
 // might be the most atrocious function body i've ever written
-fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen) Handle) Handle {
-    var expression = previousRule(ctx, codegen);
+inline fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen) ParseInterruptSignal!Handle) ParseInterruptSignal!Handle {
+    var expression = try previousRule(ctx, codegen);
     while (peek(ctx)) |tok| {
         const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
 
         advance(ctx);
 
-        const right = previousRule(ctx, codegen);
+        const right = try previousRule(ctx, codegen);
 
         expression = codegen.pushBinaryOperation(ctx, operation, expression, right);
     }
     return expression;
 }
-fn orRule(ctx: Context, codegen: *CodeGen) Handle {
+fn orRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
     return binaryRule(ctx, codegen, matches, andRule);
 }
-fn andRule(ctx: Context, codegen: *CodeGen) Handle {
+fn andRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
     return binaryRule(ctx, codegen, matches, equalityRule);
 }
-fn equalityRule(ctx: Context, codegen: *CodeGen) Handle {
+fn equalityRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
     return binaryRule(ctx, codegen, matches, comparisonRule);
 }
-fn comparisonRule(ctx: Context, codegen: *CodeGen) Handle {
+fn comparisonRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
     return binaryRule(ctx, codegen, matches, termRule);
 }
-fn termRule(ctx: Context, codegen: *CodeGen) Handle {
+fn termRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
     return binaryRule(ctx, codegen, matches, factorRule);
 }
-fn factorRule(ctx: Context, codegen: *CodeGen) Handle {
+fn factorRule(ctx: Context, codegen: *CodeGen) !Handle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
     return binaryRule(ctx, codegen, matches, unaryRule);
 }
-fn unaryRule(ctx: Context, codegen: *CodeGen) Handle {
+fn unaryRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!Handle {
     const opToken = peek(ctx);
 
     const operation: UnaryExprType = switch (toi(opToken).tokenType) {
@@ -418,13 +439,13 @@ fn unaryRule(ctx: Context, codegen: *CodeGen) Handle {
 
     advance(ctx);
 
-    const right = unaryRule(ctx, codegen);
+    const right = try unaryRule(ctx, codegen);
 
     return codegen.pushUnaryOperation(ctx, operation, right);
 }
 
 // Calls and variable usages both start with an identifier, so they're combined into one rule.
-fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Handle {
+fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!Handle {
     const iter = ctx.tokenIterator;
 
     const name = peek(ctx) orelse return primaryRule(ctx, codegen);
@@ -443,24 +464,24 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Handl
 
             var args: [MAX_ARGS]Handle = undefined;
             var argNums: usize = 0;
-            while (peek(ctx)) |t| {
+            while (peekOrInterrupt(ctx)) |t| {
                 if (t.tokenType == .rightParen) {
                     break;
                 }
 
-                args[argNums] = expressionRule(ctx, codegen);
+                args[argNums] = try expressionRule(ctx, codegen);
                 argNums += 1;
 
-                switch (toi(peek(ctx)).tokenType) {
+                const continuation = peekOrInterrupt(ctx) catch {
+                    _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
+                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+                };
+                switch (continuation.tokenType) {
                     .comma => {},
                     .rightParen => break,
                     // The argument expression is malformed, no running done
                     // foo(45;
                     // ------^ expected rightParen, found semicolon
-                    .semicolon => {
-                        _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
-                        return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
-                    },
                     else => {
                         // hacky but it works
                         _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
@@ -472,16 +493,28 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Handl
                 } else {
                     ctx.pushError(.argLimitExceeded);
                 }
-            }
+            } else |_| {}
 
-            _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
-            advance(ctx);
-            return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+            // Ending right parenthesis. If an interrupt occured (semicolon or EOF), do not advance
+            // as the statement will want to use the current token.
+            const end = peekOrInterrupt(ctx);
+            if (end) |t| {
+                advance(ctx);
+                if (t.tokenType == .rightParen) {
+                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+                } else {
+                    _ = filterCurrentTokenOrErr(.rightParen, ctx);
+                    return .ERR;
+                }
+            } else |_| {
+                _ = filterCurrentTokenOrErr(.rightParen, ctx);
+                return .ERR;
+            }
         },
         .equal => {
             advance(ctx);
 
-            const item = expressionRule(ctx, codegen);
+            const item = try expressionRule(ctx, codegen);
             return codegen.updateVariable(ctx, iter.exchangeTokenForSource(name), item);
         },
         else => {
@@ -490,9 +523,12 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Handl
     }
 }
 
-fn primaryRule(ctx: Context, codegen: *CodeGen) Handle {
+fn primaryRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!Handle {
     const iter = ctx.tokenIterator;
-    const tok = toi(peek(ctx));
+    const tok = peekOrInterrupt(ctx) catch |e| {
+        ctx.pushError(.expectedExpression);
+        return e;
+    };
 
     const result = switch (tok.tokenType) {
         .leftParen => grouping: {
