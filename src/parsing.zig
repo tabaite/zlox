@@ -474,36 +474,49 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Parse
             var args: [MAX_ARGS]Handle = undefined;
             var argNums: usize = 0;
 
-            while (peekOrInterrupt(ctx)) |t| {
-                if (t.tokenType == .rightParen) {
-                    break;
-                }
+            // crazy nesting lol
+            arguments: {
+                if (peekOrInterrupt(ctx)) |firstArg| {
+                    if (firstArg.tokenType == .rightParen) {
+                        break :arguments;
+                    }
 
-                const argExpr = try expressionRule(ctx, codegen);
-                if (argNums < MAX_ARGS) {
-                    args[argNums] = argExpr;
-                } else {
-                    ctx.pushError(.argLimitExceeded);
-                }
-                argNums += 1;
+                    while (peekOrInterrupt(ctx)) |t| {
+                        if (t.tokenType == .rightParen) {
+                            // this path is only taken if we advance
+                            // from a comma specifying another argument,
+                            // and we encounter the right paren instead
+                            ctx.log.push(.expectedExpression, ctx.tokenIterator.getCurrentTokenContext());
+                            break;
+                        }
 
-                const continuation = peekOrInterrupt(ctx) catch {
-                    _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
-                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
-                };
-                switch (continuation.tokenType) {
-                    .comma => {
-                        advance(ctx);
-                    },
-                    .rightParen => break,
-                    // If it's unrecognized, then we treat it as if it were
-                    // the start of the next argument (we assume they forgot the comma).
-                    else => {
-                        // hacky but it works
-                        _ = filterCurrentTokenOrErr(.comma, ctx);
-                    },
-                }
-            } else |_| {}
+                        const argExpr = try expressionRule(ctx, codegen);
+                        if (argNums < MAX_ARGS) {
+                            args[argNums] = argExpr;
+                        } else {
+                            ctx.pushError(.argLimitExceeded);
+                        }
+                        argNums += 1;
+
+                        const continuation = peekOrInterrupt(ctx) catch {
+                            _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
+                            return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+                        };
+                        switch (continuation.tokenType) {
+                            .comma => {
+                                advance(ctx);
+                            },
+                            .rightParen => break,
+                            // If it's unrecognized, then we treat it as if it were
+                            // the start of the next argument (we assume they forgot the comma).
+                            else => {
+                                // hacky but it works
+                                _ = filterCurrentTokenOrErr(.comma, ctx);
+                            },
+                        }
+                    } else |_| {}
+                } else |_| {}
+            }
 
             // Ending right parenthesis. If an interrupt occured (semicolon or EOF), do not advance
             // as the statement will want to use the current token.
