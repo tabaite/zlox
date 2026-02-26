@@ -7,10 +7,15 @@ fun main() {
     var see = number;
 
     // function calls
+    /// statement end before right paren closing
     sf(;
+    /// arguments are not seperated by a comma
+    qe(1 15);
+    /// trailing comma in arguments
+    burger(6, 7,);
+
+    /// argument is not an expression
     call(number);
-    qe(,)
-    hey(**);
 
     {}
 }

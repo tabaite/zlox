@@ -460,16 +460,31 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Parse
 
     switch (startParen.tokenType) {
         .leftParen => {
+            // Function call:
+            // IDENTIFIER "(" ( expression "," )* expression? ")"
+            //
+            // Handled malformed inputs:
+            // Statement end before closing parenthesis
+            // foo(; - expected right paren,found semicolon
+            //
+            // Missing comma
+            // foo(a b)
+            // ------^ expected comma, found expression
             advance(ctx);
-
             var args: [MAX_ARGS]Handle = undefined;
             var argNums: usize = 0;
+
             while (peekOrInterrupt(ctx)) |t| {
                 if (t.tokenType == .rightParen) {
                     break;
                 }
 
-                args[argNums] = try expressionRule(ctx, codegen);
+                const argExpr = try expressionRule(ctx, codegen);
+                if (argNums < MAX_ARGS) {
+                    args[argNums] = argExpr;
+                } else {
+                    ctx.pushError(.argLimitExceeded);
+                }
                 argNums += 1;
 
                 const continuation = peekOrInterrupt(ctx) catch {
@@ -477,21 +492,16 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen) Parse
                     return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
                 };
                 switch (continuation.tokenType) {
-                    .comma => {},
+                    .comma => {
+                        advance(ctx);
+                    },
                     .rightParen => break,
-                    // The argument expression is malformed, no running done
-                    // foo(45;
-                    // ------^ expected rightParen, found semicolon
+                    // If it's unrecognized, then we treat it as if it were
+                    // the start of the next argument (we assume they forgot the comma).
                     else => {
                         // hacky but it works
-                        _ = filterCurrentTokenOrErr(.comma, ctx) orelse break;
+                        _ = filterCurrentTokenOrErr(.comma, ctx);
                     },
-                }
-
-                if (argNums < MAX_ARGS) {
-                    advance(ctx);
-                } else {
-                    ctx.pushError(.argLimitExceeded);
                 }
             } else |_| {}
 

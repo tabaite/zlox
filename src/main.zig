@@ -108,9 +108,10 @@ pub fn main() !void {
 
             parsing.parseAndCompileAll(ctx, &codegen);
 
-            const errs = errLog.recover();
-            if (errs != null) {
-                for (errs.?) |trace| {
+            const errsOrNull = errLog.recover();
+            if (errsOrNull) |errs| {
+                try stderrAny.print("found {d} compilation errors:\n", .{errs.len});
+                for (errs) |trace| {
                     try handleErrorTrace(trace, ctx, stderrAny);
                 }
                 return;
@@ -127,9 +128,10 @@ pub fn main() !void {
 
             parsing.parseAndCompileAll(ctx, &codegen);
 
-            const errs = errLog.recover();
-            if (errs != null) {
-                for (errs.?) |trace| {
+            const errsOrNull = errLog.recover();
+            if (errsOrNull) |errs| {
+                try stderrAny.print("found {d} compilation errors:\n", .{errs.len});
+                for (errs) |trace| {
                     try handleErrorTrace(trace, ctx, stderrAny);
                 }
                 return;
