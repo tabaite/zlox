@@ -1,0 +1,5 @@
+// expected (function) identifier, found number literal
+fun 123() {}
+
+// expected right paren, found end of file
+fun main(
