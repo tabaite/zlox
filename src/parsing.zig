@@ -93,7 +93,7 @@ const InterruptLevel = enum(u32) {
     /// ( 15 * ; <- expected expression, found semicolon
     /// ( 15 * } <- expected expression, found right brace
     /// ( 15 * EOF <- expected expression, found EOF
-    Parenthesis = 3,
+    parenthesis = 3,
 
     /// For most statements.
     ///
@@ -102,17 +102,17 @@ const InterruptLevel = enum(u32) {
     /// var result = ; <- expected expression, found semicolon
     /// var result = } <- expected expression, found right brace
     /// var result = EOF <- expected expression, found EOF
-    Semicolon = 2,
+    semicolon = 2,
 
     /// For anything within a block that doesn't count as a statement.
-    Brace = 1,
+    brace = 1,
 
     /// For anything that can only be interrupted by the end of the file.
     ///
     /// Example of potential interrupt locations:
     /// _____________ - expression that will be given the "EOF" interrupt level
     /// fun foo ( EOF <- expected right paren, found EOF
-    EOF = 0,
+    eof = 0,
 
     pub fn asInt(self: InterruptLevel) u32 {
         return @intFromEnum(self);
@@ -354,26 +354,26 @@ fn statementRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
 }
 
 fn returnRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!BlockReturnInfo {
-    const ret = try peekOrInterrupt(ctx, .Semicolon);
+    const ret = try peekOrInterrupt(ctx, .semicolon);
     if (ret.tokenType != .kwReturn) {
         try declarationRule(ctx, codegen);
         return .{ .returnsOnAllPaths = false };
     }
     advance(ctx);
-    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .Semicolon));
+    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .semicolon));
     return .{ .returnsOnAllPaths = true };
 }
 
 fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
     const iter = ctx.tokenIterator;
-    const decl = try peekOrInterrupt(ctx, .Semicolon);
+    const decl = try peekOrInterrupt(ctx, .semicolon);
     if (decl.tokenType != .kwVar) {
-        _ = try expressionRule(ctx, codegen, .Semicolon);
+        _ = try expressionRule(ctx, codegen, .semicolon);
         return;
     }
     advance(ctx);
 
-    const nameToken = try peekOrInterrupt(ctx, .Semicolon);
+    const nameToken = try peekOrInterrupt(ctx, .semicolon);
     if (nameToken.tokenType != .identifier) {
         ctx.pushError(.{ .expectedToken = .{ .expected = .identifier } });
     }
@@ -383,7 +383,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
         .colon => {
             advance(ctx);
 
-            const typeToken = peekOrInterrupt(ctx, .Semicolon) catch |e| {
+            const typeToken = peekOrInterrupt(ctx, .semicolon) catch |e| {
                 // todo: fix
                 ctx.pushError(.expectedTypeToken);
                 return e;
@@ -406,7 +406,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
                 switch (next.tokenType) {
                     .equal => {
                         advance(ctx);
-                        break :val try expressionRule(ctx, codegen, .Semicolon);
+                        break :val try expressionRule(ctx, codegen, .semicolon);
                     },
                     .semicolon => {
                         break :val null;
@@ -423,7 +423,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
         },
         .equal => {
             advance(ctx);
-            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen, .Semicolon) });
+            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen, .semicolon) });
             return;
         },
         // Includes semicolon.
@@ -604,7 +604,7 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
     const result = switch (tok.tokenType) {
         .leftParen => grouping: {
             advance(ctx);
-            const expr = try expressionRule(ctx, codegen, .Parenthesis);
+            const expr = try expressionRule(ctx, codegen, .parenthesis);
 
             // current will be the token following expr
             _ = filterCurrentTokenOrErr(.rightParen, ctx);
