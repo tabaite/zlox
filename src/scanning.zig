@@ -226,6 +226,7 @@ pub const TokenIterator = struct {
         const result = self.peekInternal(log);
         if (result.token) |t| {
             self.position = result.newPos;
+            self.lineNumber = result.lineNumber;
             return t;
         } else {
             return null;
@@ -263,7 +264,6 @@ pub const TokenIterator = struct {
 
     fn scan(self: *TokenIterator) TokenContext {
         var lineNumber = self.lineNumber;
-        defer self.lineNumber = lineNumber;
         var i = self.position;
 
         while (i < self.source.len) {
