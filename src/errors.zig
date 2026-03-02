@@ -163,20 +163,22 @@ pub const Error = union(enum) {
     }
 };
 
+pub const ErrorLocation = union(enum) {
+    eof,
+    token: struct {
+        t: Token,
+    },
+    sourceRange: struct {
+        start: u32,
+        /// We set this to max(u32) if the end provided is null.
+        endPossiblyOOB: u32,
+    },
+};
+
 pub const ErrorTrace = struct {
     err: Error,
     // null means EOF
-    where: union(enum) {
-        eof,
-        token: struct {
-            t: Token,
-        },
-        sourceRange: struct {
-            start: u32,
-            /// We set this to max(u32) if the end provided is null.
-            endPossiblyOOB: u32,
-        },
-    },
+    where: ErrorLocation,
     lineNumber: u32,
 };
 
