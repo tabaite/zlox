@@ -608,7 +608,14 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
             const expr = try expressionRule(ctx, codegen, .parenthesis);
 
             // current will be the token following expr
-            _ = filterCurrentTokenOrErr(.rightParen, ctx);
+            const endParen = peekOrInterrupt(ctx, interruptLevel) catch {
+                ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
+                return .ERR;
+            };
+            if (endParen.tokenType != .rightParen) {
+                ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
+                return .ERR;
+            }
             advance(ctx);
             break :grouping expr;
         },

@@ -3,8 +3,24 @@ fun main() {
     // that should resolve cleanly (not "bleed" errors onto the next line)
 
     // expressions
-    var height = ;
-    var see = number;
+
+    /// expected a valid expression ------v
+    var semicolon_instead_of_expression = ;
+
+    /// ---------------------vvvvvv expected a valid expression
+    var invalid_expression = number;
+
+    /// expected a valid expression ---------v
+    var premature_semicolon_in_group = (15 * ;
+
+    /// expected a valid expression ------------v
+    var premature_semicolon_in_group_2 = (12 * (;
+
+    /// expected a valid expression -----v
+    var premature_paren_in_group = (12 * ) / 6;
+
+
+
 
     // function calls
     /// statement end before right paren closing

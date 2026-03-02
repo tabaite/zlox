@@ -16,20 +16,42 @@ Because of this, any rule that **must** return a value in its signature (like fe
 when the variable doesn't exist) can just send back some junk. yay!
 
 todo:
-- change how parsing works to seperate by lines conceptually
-  reasoning:
+- strip leading whitespace from error lines
+  this will improve readability in cases where lots of indenting is present.
+- make error highlights not display line number
+  it's a stupid hack to align it with the line.
+- add compiler "hints"
+  probably pass in an object to error handling functions that can render any associated hints + underlines
+  example:
   ```
-  // a)
-  var height = ;
-  // ----------^ expected expression, found semicolon
-  var height = ,;
-  // ----------^ expected expression, found comma
+  error:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: ------------------------------------------------^
+  expected right parenthesis
 
-  // b)
-  qe(;)
-  // ^ expected expression, found semicolon
-  qe(,)
-  // ^ expected expression, found comma
+  error:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: ------------------------------------------------^
+  expected right parenthesis
   ```
-  are basically the same, even though we as humans know that in a) the semicolon should signify
-  the end of the expression's valid "area", and in b) the comma should.
+
+  this is pretty confusing to the user. a hint might be useful:
+  ```
+  error:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: ------------------------------------------------^
+  expected right parenthesis
+  note:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: -----------------------------------------------^
+  expression grouping started here
+
+  error:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: ------------------------------------------------^
+  expected right parenthesis
+  note:
+  5:     var premature_semicolon_in_group_2 = (12 * (;
+  5: -----------------------------------------^
+  expression grouping started here
+  ```
