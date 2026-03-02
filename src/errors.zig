@@ -36,8 +36,6 @@ pub const Error = union(enum) {
     /// fun * ()
     /// ----^ expected IDENTIFIER, found STAR
     expectedToken: struct {
-        // We can expect something and find null.
-        found: ?Token,
         expected: TokenType,
     },
 
@@ -46,10 +44,7 @@ pub const Error = union(enum) {
     /// Example:
     /// fun ewrerwr() / {}
     /// --------------^ expected type, found SLASH
-    expectedTypeToken: struct {
-        // We can expect something and find null.
-        found: ?Token,
-    },
+    expectedTypeToken,
 
     /// A specialized version of expectedToken
     /// for type annotations (which are multiple tokens)
@@ -135,18 +130,10 @@ pub const Error = union(enum) {
             .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
             .unterminatedString => _ = try out.write("unterminated string"),
             .expectedToken => |e| {
-                if (e.found) |found| {
-                    try out.print("expected {s}, found {s}", .{ e.expected.typeAsString(), found.tokenType.typeAsString() });
-                } else {
-                    try out.print("expected {s}, found the end of the file", .{e.expected.typeAsString()});
-                }
+                try out.print("expected {s}", .{e.expected.typeAsString()});
             },
-            .expectedTypeToken => |e| {
-                if (e.found) |found| {
-                    try out.print("expected a type, found {s}", .{found.tokenType.typeAsString()});
-                } else {
-                    _ = try out.write("expected a type, found the end of the file");
-                }
+            .expectedTypeToken => {
+                _ = try out.write("expected a type here");
             },
             .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
             .expectedExpression => _ = try out.write("expected a valid expression"),

@@ -4,9 +4,9 @@ const ErrorLog = errors.ErrorLog;
 const std = @import("std");
 const testing = std.testing;
 
-pub const TokenType = enum {
+pub const TokenType = enum(u32) {
     // workarounds to interface properly with error log
-    unterminatedString,
+    unterminatedString = 1,
     invalidChar,
 
     leftParen,
