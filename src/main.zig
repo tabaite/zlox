@@ -89,7 +89,7 @@ pub fn main() !void {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
             defer tokens.deinit();
 
-            while (iter.next(&errLog)) |token| {
+            while (iter.next(&errLog).token) |token| {
                 if (token.tokenType == .invalidChar) {
                     try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, iter.exchangeTokenForSource(token) });
                 } else {

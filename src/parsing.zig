@@ -5,6 +5,7 @@ const context = @import("context.zig");
 
 const MAX_ARGS = bytecode.MAX_ARGS;
 const Token = scanning.Token;
+const TokenContext = scanning.TokenContext;
 const CodeGen = bytecode.BytecodeGenerator;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
@@ -129,8 +130,9 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
     return null;
 }
 
-inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSignal!Token {
-    const token = ctx.tokenIterator.peek(ctx.log) orelse return ParseInterruptSignal.ReachedEndOfStatement;
+inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSignal!TokenContext {
+    const tokenContext = ctx.tokenIterator.peek(ctx.log);
+    const token = tokenContext.token orelse return ParseInterruptSignal.ReachedEndOfStatement;
     const MatchVec = @Vector(4, u32);
     const TT = scanning.TokenType;
 
@@ -143,11 +145,7 @@ inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSig
 
     const mask: MatchVec = @splat(@intFromEnum(token.tokenType));
     const interruptResult = interruptMatches[level.asInt()] == mask;
-    return if (@reduce(.Or, interruptResult)) ParseInterruptSignal.ReachedEndOfStatement else token;
-}
-
-inline fn peek(ctx: Context) ?Token {
-    return ctx.tokenIterator.peek(ctx.log);
+    return if (@reduce(.Or, interruptResult)) ParseInterruptSignal.ReachedEndOfStatement else tokenContext;
 }
 
 inline fn advance(ctx: Context) void {
@@ -163,15 +161,15 @@ inline fn toi(t: ?Token) Token {
 inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context) ?Token {
     const log = ctx.log;
     const iter = ctx.tokenIterator;
-    const token = iter.peek(log);
-    if (token) |t| {
+    const tokenContext = iter.peek(log);
+    if (tokenContext.token) |t| {
         if (t.tokenType != tt) {
-            log.push(.{ .expectedToken = .{ .expected = tt } }, iter.getCurrentTokenContext());
+            log.push(.{ .expectedToken = .{ .expected = tt } }, tokenContext);
             return null;
         }
         return t;
     } else {
-        log.push(.{ .expectedToken = .{ .expected = tt } }, iter.getCurrentTokenContext());
+        log.push(.{ .expectedToken = .{ .expected = tt } }, tokenContext);
         return null;
     }
 }
@@ -183,7 +181,7 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context) ?Token {
 pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) void {
     const iter = ctx.tokenIterator;
     const log = ctx.log;
-    while (iter.peek(log)) |_| {
+    while (iter.peek(log).token) |_| {
         functionDeclarationRule(ctx, codegen);
     }
     // If there is no active function, this is a no-op.
@@ -207,13 +205,13 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
 
     // if EOF, main ( EOF,
     // skip parsing arguments
-    const argStart: Token = peekOrInterrupt(ctx, .eof) catch .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 };
-
-    if (argStart.tokenType != .rightParen) while (peek(ctx)) |_| {
-        const arg_name = filterCurrentTokenOrErr(.identifier, ctx) orelse break;
+    // should be fine to implement this hack
+    const argStart = peekOrInterrupt(ctx, .eof) catch .{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 } };
+    if (argStart.token.?.tokenType != .rightParen) while (peekOrInterrupt(ctx, .eof)) |_| {
+        const argName = filterCurrentTokenOrErr(.identifier, ctx) orelse break;
         advance(ctx);
-        const typeDesignatorOrNull = peek(ctx);
-        if (typeDesignatorOrNull) |typeDesignator| {
+        const typeDesignatorOrNull = peekOrInterrupt(ctx, .eof);
+        if (typeDesignatorOrNull.token) |typeDesignator| {
             switch (typeDesignator.tokenType) {
                 .comma => {
                     ctx.pushError(.expectedTypeAnnotation);
@@ -221,10 +219,10 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
 
                 .colon => {
                     advance(ctx);
-                    const arg_type_or_null = peek(ctx);
-                    if (arg_type_or_null) |arg_type| {
+                    const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
+                    if (argTypeOrInterrupt) |argType| {
                         args[argCount] = .{
-                            .type = switch (arg_type.tokenType) {
+                            .type = switch (argType.token.?.tokenType) {
                                 .tyBool => .bool,
                                 .tyNum => .number,
                                 .tyString => .string,
@@ -237,9 +235,9 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
                                     break :e .nil;
                                 },
                             },
-                            .name = iter.exchangeTokenForSource(arg_name),
+                            .name = iter.exchangeTokenForSource(argName),
                         };
-                    } else {
+                    } else |_| {
                         ctx.pushError(.expectedTypeToken);
                     }
                     advance(ctx);
@@ -252,36 +250,38 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
             }
         }
 
-        const continuation = peek(ctx);
-        switch (toi(continuation).tokenType) {
-            .rightParen => {
-                if (argCount == MAX_ARGS - 1) {
-                    // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                    ctx.pushError(.argLimitExceeded);
+        const continuationOrInterrupt = peekOrInterrupt(ctx, .eof);
+        if (continuationOrInterrupt) |continuation| {
+            switch (toi(continuation).tokenType) {
+                .rightParen => {
+                    if (argCount == MAX_ARGS - 1) {
+                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
+                        ctx.pushError(.argLimitExceeded);
+                        break;
+                    } else {
+                        argCount += 1;
+                    }
                     break;
-                } else {
-                    argCount += 1;
-                }
-                break;
-            },
-            .comma => {
-                advance(ctx);
-                if (argCount == MAX_ARGS - 1) {
-                    // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
-                    ctx.pushError(.argLimitExceeded);
-                    break;
-                } else {
-                    argCount += 1;
-                }
-            },
-            else => ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } }),
-        }
-    };
+                },
+                .comma => {
+                    advance(ctx);
+                    if (argCount == MAX_ARGS - 1) {
+                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
+                        ctx.pushError(.argLimitExceeded);
+                        break;
+                    } else {
+                        argCount += 1;
+                    }
+                },
+                else => ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } }),
+            }
+        } else |_| {}
+    } else |_| {};
 
     _ = filterCurrentTokenOrErr(.rightParen, ctx);
     advance(ctx);
 
-    const returnTypeTokenOrNull = peek(ctx);
+    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 };
     const retType: bytecode.Type = ret: switch (toi(returnTypeTokenOrNull).tokenType) {
         .tyBool => {
             advance(ctx);
@@ -333,14 +333,15 @@ fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
 
 fn blockBodyRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     var blockRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = false };
-    while (peek(ctx)) |t| {
-        const subblockRetInfo: BlockReturnInfo = switch (t.tokenType) {
+    while (peekOrInterrupt(ctx)) |t| {
+        const tk = t.token;
+        const subblockRetInfo: BlockReturnInfo = switch (tk.tokenType) {
             .leftBrace => blockRule(ctx, codegen),
             .rightBrace => return blockRetInfo,
             else => statementRule(ctx, codegen),
         };
         blockRetInfo.returnsOnAllPaths = blockRetInfo.returnsOnAllPaths or subblockRetInfo.returnsOnAllPaths;
-    }
+    } else |_| {}
     return blockRetInfo;
 }
 
@@ -380,7 +381,15 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
     }
 
     advance(ctx);
-    switch (toi(peek(ctx)).tokenType) {
+    const typeHintOrEqualsCtx = peekOrInterrupt(ctx, .semicolon) catch {
+        ctx.pushError(.expectedTypeAnnotation);
+        return ParseInterruptSignal.ReachedEndOfStatement;
+    };
+    const typeHintOrEquals = typeHintOrEqualsCtx.token orelse {
+        ctx.pushError(.expectedTypeAnnotation);
+        return ParseInterruptSignal.ReachedEndOfStatement;
+    };
+    switch (typeHintOrEquals.tokenType) {
         .colon => {
             advance(ctx);
 
@@ -402,7 +411,8 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
 
             advance(ctx);
 
-            const next = peek(ctx) orelse return ParseInterruptSignal.ReachedEndOfStatement;
+            const nextCtx = try peekOrInterrupt(ctx);
+            const next = nextCtx.token orelse return ParseInterruptSignal.ReachedEndOfStatement;
             const initialValue: ?Handle = val: {
                 switch (next.tokenType) {
                     .equal => {
@@ -446,7 +456,7 @@ fn expressionRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLeve
 // might be the most atrocious function body i've ever written
 inline fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen, InterruptLevel) ParseInterruptSignal!Handle, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
     var expression = try previousRule(ctx, codegen, interruptLevel);
-    while (peek(ctx)) |tok| {
+    while (peekOrInterrupt(ctx, interruptLevel)) |tok| {
         const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
 
         advance(ctx);
@@ -454,7 +464,7 @@ inline fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const 
         const right = try previousRule(ctx, codegen, interruptLevel);
 
         expression = codegen.pushBinaryOperation(ctx, operation, expression, right);
-    }
+    } else |_| {}
     return expression;
 }
 fn orRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {

@@ -222,20 +222,17 @@ pub const TokenIterator = struct {
         return .{ .source = source };
     }
 
-    pub fn next(self: *TokenIterator, log: *ErrorLog) ?Token {
+    pub fn next(self: *TokenIterator, log: *ErrorLog) TokenContext {
         const result = self.peekInternal(log);
-        if (result.token) |t| {
+        if (result.token) |_| {
             self.position = result.newPos;
             self.lineNumber = result.lineNumber;
-            return t;
-        } else {
-            return null;
         }
+        return result;
     }
 
-    pub fn peek(self: *TokenIterator, log: *ErrorLog) ?Token {
-        const tk = self.peekInternal(log);
-        return tk.token;
+    pub fn peek(self: *TokenIterator, log: *ErrorLog) TokenContext {
+        return self.peekInternal(log);
     }
 
     fn peekInternal(self: *TokenIterator, log: *ErrorLog) TokenContext {
@@ -256,10 +253,6 @@ pub const TokenIterator = struct {
         } else {
             return result;
         }
-    }
-
-    pub fn getCurrentTokenContext(self: *TokenIterator) TokenContext {
-        return self.scan();
     }
 
     fn scan(self: *TokenIterator) TokenContext {

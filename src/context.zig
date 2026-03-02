@@ -12,6 +12,6 @@ pub const Context = struct {
     log: *ErrorLog,
 
     pub fn pushError(self: Context, err: Error) void {
-        self.log.push(err, self.tokenIterator.getCurrentTokenContext());
+        self.log.push(err, self.tokenIterator.peek(self.log));
     }
 };
