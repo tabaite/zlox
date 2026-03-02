@@ -207,7 +207,7 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
 
     // if EOF, main ( EOF,
     // skip parsing arguments
-    const argStart: Token = peek(ctx) orelse .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 };
+    const argStart: Token = peekOrInterrupt(ctx, .eof) catch .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 };
 
     if (argStart.tokenType != .rightParen) while (peek(ctx)) |_| {
         const arg_name = filterCurrentTokenOrErr(.identifier, ctx) orelse break;
@@ -311,10 +311,11 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     if (funNameTOrNull) |funNameT| {
         const funName = iter.exchangeTokenForSource(funNameT);
         codegen.enterFunction(ctx, funName, args[0..argCount], retType);
-        // Function body
-        _ = blockRule(ctx, codegen);
-        codegen.exitFunction(ctx);
     }
+    // Function body
+    _ = blockRule(ctx, codegen);
+    // works even if we don't enter the function
+    codegen.exitFunction(ctx);
 }
 
 fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
