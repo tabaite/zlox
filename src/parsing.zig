@@ -206,53 +206,55 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     // if EOF, main ( EOF,
     // skip parsing arguments
     // should be fine to implement this hack
-    const argStart = peekOrInterrupt(ctx, .eof) catch .{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 } };
+    const argStart = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 } };
     if (argStart.token.?.tokenType != .rightParen) while (peekOrInterrupt(ctx, .eof)) |_| {
         const argName = filterCurrentTokenOrErr(.identifier, ctx) orelse break;
         advance(ctx);
-        const typeDesignatorOrNull = peekOrInterrupt(ctx, .eof);
-        if (typeDesignatorOrNull.token) |typeDesignator| {
-            switch (typeDesignator.tokenType) {
-                .comma => {
-                    ctx.pushError(.expectedTypeAnnotation);
-                },
+        const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, .eof);
+        if (typeDesignatorOrInterrupt) |typeDesignatorOrNull| {
+            if (typeDesignatorOrNull.token) |typeDesignator| {
+                switch (typeDesignator.tokenType) {
+                    .comma => {
+                        ctx.pushError(.expectedTypeAnnotation);
+                    },
 
-                .colon => {
-                    advance(ctx);
-                    const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
-                    if (argTypeOrInterrupt) |argType| {
-                        args[argCount] = .{
-                            .type = switch (argType.token.?.tokenType) {
-                                .tyBool => .bool,
-                                .tyNum => .number,
-                                .tyString => .string,
-                                .tyVoid => e: {
-                                    ctx.pushError(.argumentTypeCannotBeVoid);
-                                    break :e .nil;
+                    .colon => {
+                        advance(ctx);
+                        const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
+                        if (argTypeOrInterrupt) |argType| {
+                            args[argCount] = .{
+                                .type = switch (argType.token.?.tokenType) {
+                                    .tyBool => .bool,
+                                    .tyNum => .number,
+                                    .tyString => .string,
+                                    .tyVoid => e: {
+                                        ctx.pushError(.argumentTypeCannotBeVoid);
+                                        break :e .nil;
+                                    },
+                                    else => e: {
+                                        ctx.pushError(.expectedTypeToken);
+                                        break :e .nil;
+                                    },
                                 },
-                                else => e: {
-                                    ctx.pushError(.expectedTypeToken);
-                                    break :e .nil;
-                                },
-                            },
-                            .name = iter.exchangeTokenForSource(argName),
-                        };
-                    } else |_| {
-                        ctx.pushError(.expectedTypeToken);
-                    }
-                    advance(ctx);
-                },
+                                .name = iter.exchangeTokenForSource(argName),
+                            };
+                        } else |_| {
+                            ctx.pushError(.expectedTypeToken);
+                        }
+                        advance(ctx);
+                    },
 
-                else => {
-                    ctx.pushError(.expectedTypeAnnotation);
-                    break;
-                },
+                    else => {
+                        ctx.pushError(.expectedTypeAnnotation);
+                        break;
+                    },
+                }
             }
-        }
+        } else |_| {}
 
         const continuationOrInterrupt = peekOrInterrupt(ctx, .eof);
         if (continuationOrInterrupt) |continuation| {
-            switch (toi(continuation).tokenType) {
+            switch (toi(continuation.token).tokenType) {
                 .rightParen => {
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
@@ -281,8 +283,8 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     _ = filterCurrentTokenOrErr(.rightParen, ctx);
     advance(ctx);
 
-    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 };
-    const retType: bytecode.Type = ret: switch (toi(returnTypeTokenOrNull).tokenType) {
+    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 } };
+    const retType: bytecode.Type = ret: switch (toi(returnTypeTokenOrNull.token).tokenType) {
         .tyBool => {
             advance(ctx);
             break :ret .bool;
@@ -333,15 +335,19 @@ fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
 
 fn blockBodyRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
     var blockRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = false };
-    while (peekOrInterrupt(ctx)) |t| {
-        const tk = t.token;
+    while (peekOrInterrupt(ctx, .brace)) |t| {
+        const tk = t.token orelse break;
         const subblockRetInfo: BlockReturnInfo = switch (tk.tokenType) {
             .leftBrace => blockRule(ctx, codegen),
+            // might not be reachable..?
             .rightBrace => return blockRetInfo,
             else => statementRule(ctx, codegen),
         };
         blockRetInfo.returnsOnAllPaths = blockRetInfo.returnsOnAllPaths or subblockRetInfo.returnsOnAllPaths;
-    } else |_| {}
+    } else |_| {
+        // when we are interrupted by either EOF or right brace
+        _ = filterCurrentTokenOrErr(.rightBrace, ctx);
+    }
     return blockRetInfo;
 }
 
@@ -357,9 +363,11 @@ fn statementRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
 
 fn returnRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!BlockReturnInfo {
     const ret = try peekOrInterrupt(ctx, .semicolon);
-    if (ret.tokenType != .kwReturn) {
-        try declarationRule(ctx, codegen);
-        return .{ .returnsOnAllPaths = false };
+    if (ret.token) |t| {
+        if (t.tokenType != .kwReturn) {
+            try declarationRule(ctx, codegen);
+            return .{ .returnsOnAllPaths = false };
+        }
     }
     advance(ctx);
     codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .semicolon));
@@ -369,14 +377,14 @@ fn returnRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!BlockReturnI
 fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
     const iter = ctx.tokenIterator;
     const decl = try peekOrInterrupt(ctx, .semicolon);
-    if (decl.tokenType != .kwVar) {
+    if (decl.token.?.tokenType != .kwVar) {
         _ = try expressionRule(ctx, codegen, .semicolon);
         return;
     }
     advance(ctx);
 
     const nameToken = try peekOrInterrupt(ctx, .semicolon);
-    if (nameToken.tokenType != .identifier) {
+    if (nameToken.token.?.tokenType != .identifier) {
         ctx.pushError(.{ .expectedToken = .{ .expected = .identifier } });
     }
 
@@ -398,7 +406,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
                 ctx.pushError(.expectedTypeToken);
                 return e;
             };
-            const varType: bytecode.Type = switch (typeToken.tokenType) {
+            const varType: bytecode.Type = switch (typeToken.token.?.tokenType) {
                 .tyBool => .bool,
                 .tyNum => .number,
                 .tyString => .string,
@@ -411,7 +419,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
 
             advance(ctx);
 
-            const nextCtx = try peekOrInterrupt(ctx);
+            const nextCtx = try peekOrInterrupt(ctx, .semicolon);
             const next = nextCtx.token orelse return ParseInterruptSignal.ReachedEndOfStatement;
             const initialValue: ?Handle = val: {
                 switch (next.tokenType) {
@@ -429,12 +437,12 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
                 }
             };
 
-            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .provided = .{ .type = varType, .initial = initialValue } });
+            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken.token.?), .{ .provided = .{ .type = varType, .initial = initialValue } });
             return;
         },
         .equal => {
             advance(ctx);
-            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken), .{ .fromValue = try expressionRule(ctx, codegen, .semicolon) });
+            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken.token.?), .{ .fromValue = try expressionRule(ctx, codegen, .semicolon) });
             return;
         },
         // Includes semicolon.
@@ -457,7 +465,7 @@ fn expressionRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLeve
 inline fn binaryRule(ctx: Context, codegen: *CodeGen, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen, InterruptLevel) ParseInterruptSignal!Handle, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
     var expression = try previousRule(ctx, codegen, interruptLevel);
     while (peekOrInterrupt(ctx, interruptLevel)) |tok| {
-        const operation = matchTokenToExprOrNull(tok.tokenType, matches) orelse break;
+        const operation = matchTokenToExprOrNull(tok.token.?.tokenType, matches) orelse break;
 
         advance(ctx);
 
@@ -494,7 +502,7 @@ fn factorRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !
 fn unaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
     const opToken = peekOrInterrupt(ctx, interruptLevel) catch return functionCallOrVariableOrAssignmentRule(ctx, codegen, interruptLevel);
 
-    const operation: UnaryExprType = switch (opToken.tokenType) {
+    const operation: UnaryExprType = switch (opToken.token.?.tokenType) {
         .bang => .negateBool,
         .minus => .negate,
         else => return functionCallOrVariableOrAssignmentRule(ctx, codegen, interruptLevel),
@@ -511,9 +519,10 @@ fn unaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) Pa
 fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
     const iter = ctx.tokenIterator;
 
-    const name = peekOrInterrupt(ctx, interruptLevel) catch return primaryRule(ctx, codegen, interruptLevel);
+    const nameCtx = peekOrInterrupt(ctx, interruptLevel) catch return primaryRule(ctx, codegen, interruptLevel);
+    const nameToken = nameCtx.token.?;
 
-    if (name.tokenType != .identifier and name.tokenType != .kwPrint) {
+    if (nameToken.tokenType != .identifier and nameToken.tokenType != .kwPrint) {
         return primaryRule(ctx, codegen, interruptLevel);
     }
     advance(ctx);
@@ -522,7 +531,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         return Handle.NIL;
     };
 
-    if (startParen.tokenType == .leftParen) {
+    if (startParen.token.?.tokenType == .leftParen) {
         // Function call:
         // IDENTIFIER "(" ( expression "," )* expression? ")"
         //
@@ -540,16 +549,16 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         // crazy nesting lol
         arguments: {
             const firstArg = peekOrInterrupt(ctx, interruptLevel) catch break :arguments;
-            if (firstArg.tokenType == .rightParen) {
+            if (firstArg.token.?.tokenType == .rightParen) {
                 break :arguments;
             }
 
             while (peekOrInterrupt(ctx, interruptLevel)) |t| {
-                if (t.tokenType == .rightParen) {
+                if (t.token.?.tokenType == .rightParen) {
                     // this path is only taken if we advance
                     // from a comma specifying another argument,
                     // and we encounter the right paren instead
-                    ctx.log.push(.expectedExpression, ctx.tokenIterator.getCurrentTokenContext());
+                    ctx.log.push(.expectedExpression, t);
                     break;
                 }
 
@@ -563,9 +572,9 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
 
                 const continuation = peekOrInterrupt(ctx, interruptLevel) catch {
                     _ = filterCurrentTokenOrErr(.rightParen, ctx) orelse return .ERR;
-                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(nameCtx.token.?), args[0..argNums]);
                 };
-                switch (continuation.tokenType) {
+                switch (continuation.token.?.tokenType) {
                     .comma => {
                         advance(ctx);
                     },
@@ -585,8 +594,8 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         const end = peekOrInterrupt(ctx, interruptLevel);
         if (end) |t| {
             advance(ctx);
-            if (t.tokenType == .rightParen) {
-                return codegen.callFunction(ctx, iter.exchangeTokenForSource(name), args[0..argNums]);
+            if (t.token.?.tokenType == .rightParen) {
+                return codegen.callFunction(ctx, iter.exchangeTokenForSource(nameCtx.token.?), args[0..argNums]);
             } else {
                 _ = filterCurrentTokenOrErr(.rightParen, ctx);
                 return .ERR;
@@ -595,13 +604,13 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
             _ = filterCurrentTokenOrErr(.rightParen, ctx);
             return .ERR;
         }
-    } else if (startParen.tokenType == .equal) {
+    } else if (startParen.token.?.tokenType == .equal) {
         advance(ctx);
 
         const item = try expressionRule(ctx, codegen, interruptLevel);
-        return codegen.updateVariable(ctx, iter.exchangeTokenForSource(name), item);
+        return codegen.updateVariable(ctx, iter.exchangeTokenForSource(nameCtx.token.?), item);
     } else {
-        return codegen.getVariable(ctx, iter.exchangeTokenForSource(name));
+        return codegen.getVariable(ctx, iter.exchangeTokenForSource(nameCtx.token.?));
     }
 }
 
@@ -612,7 +621,7 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
         return e;
     };
 
-    const result = switch (tok.tokenType) {
+    const result = switch (tok.token.?.tokenType) {
         .leftParen => grouping: {
             advance(ctx);
             const expr = try expressionRule(ctx, codegen, .parenthesis);
@@ -622,15 +631,15 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
                 return .ERR;
             };
-            if (endParen.tokenType != .rightParen) {
+            if (endParen.token.?.tokenType != .rightParen) {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
                 return .ERR;
             }
             advance(ctx);
             break :grouping expr;
         },
-        .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, iter.exchangeTokenForSource(tok)) catch 0),
-        .string => codegen.newStringLit(iter.exchangeTokenForSource(tok)),
+        .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, iter.exchangeTokenForSource(tok.token.?)) catch 0),
+        .string => codegen.newStringLit(iter.exchangeTokenForSource(tok.token.?)),
         .kwNil => CodeGen.newNilLit(),
         .kwTrue => comptime CodeGen.newBoolLit(true),
         .kwFalse => comptime CodeGen.newBoolLit(false),
