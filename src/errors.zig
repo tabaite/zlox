@@ -12,6 +12,18 @@ const Token = scanning.Token;
 const TokenType = scanning.TokenType;
 const TokenContext = scanning.TokenContext;
 
+pub const ErrorLocation = union(enum) {
+    eof,
+    token: struct {
+        t: Token,
+    },
+    sourceRange: struct {
+        start: u32,
+        /// We set this to max(u32) if the end provided is null.
+        endPossiblyOOB: u32,
+    },
+};
+
 pub const Error = union(enum) {
     // SCANNING ERRORS
     /// When we can't recognize.
@@ -124,16 +136,29 @@ pub const Error = union(enum) {
     // -----------^ rad already defined
     variableAlreadyDefined: struct { name: []u8 },
     functionAlreadyDefined: struct { name: []u8 },
+};
 
-    pub fn printSelf(self: Error, out: std.io.AnyWriter) !void {
-        switch (self) {
+pub const ErrorTrace = struct {
+    err: Error,
+    // null means EOF
+    where: ErrorLocation,
+    lineNumber: u32,
+
+    pub fn printSelf(self: ErrorTrace, out: std.io.AnyWriter) !void {
+        const location: []u8 = switch (self.where) {
+            .eof => @constCast("end of file"),
+            .token => |t| @constCast(t.t.tokenType.typeAsString()),
+            // errors using sourceRange do not print location generally
+            .sourceRange => @constCast(""),
+        };
+        switch (self.err) {
             .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
             .unterminatedString => _ = try out.write("unterminated string"),
             .expectedToken => |e| {
-                try out.print("expected {s}", .{e.expected.typeAsString()});
+                try out.print("expected {s}, found {s}", .{ e.expected.typeAsString(), location });
             },
             .expectedTypeToken => {
-                _ = try out.write("expected a type here");
+                try out.print("expected a type here, found {s}", .{location});
             },
             .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
             .expectedExpression => _ = try out.write("expected a valid expression"),
@@ -161,25 +186,6 @@ pub const Error = union(enum) {
             .functionAlreadyDefined => _ = try out.write("trying to redefine a function (overloading soon i promise)"),
         }
     }
-};
-
-pub const ErrorLocation = union(enum) {
-    eof,
-    token: struct {
-        t: Token,
-    },
-    sourceRange: struct {
-        start: u32,
-        /// We set this to max(u32) if the end provided is null.
-        endPossiblyOOB: u32,
-    },
-};
-
-pub const ErrorTrace = struct {
-    err: Error,
-    // null means EOF
-    where: ErrorLocation,
-    lineNumber: u32,
 };
 
 pub const ErrorLog = struct {

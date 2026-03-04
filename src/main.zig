@@ -200,6 +200,6 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
     try out.writeByteNTimes('^', hlLen);
     _ = try out.write("\x1b[0m\n");
 
-    try trace.err.printSelf(out);
+    try trace.printSelf(out);
     try out.writeByteNTimes('\n', 2);
 }
