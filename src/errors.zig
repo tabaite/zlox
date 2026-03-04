@@ -195,7 +195,7 @@ pub const ErrorLog = struct {
     }
 
     pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
-        const trace: ErrorTrace = .{ .err = err, .where = if (context.token) |t| .{ .token = .{ .t = t } } else .eof, .lineNumber = context.lineNumber };
+        const trace: ErrorTrace = .{ .err = err, .where = if (context.token.tokenType != .eof) .{ .token = .{ .t = context.token } } else .eof, .lineNumber = context.lineNumber };
         self.backing[self.used] = trace;
         self.used += 1;
     }

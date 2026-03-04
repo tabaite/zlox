@@ -6,7 +6,8 @@ const testing = std.testing;
 
 pub const TokenType = enum(u32) {
     // workarounds to interface properly with error log
-    unterminatedString = 1,
+    eof = 1,
+    unterminatedString,
     invalidChar,
 
     leftParen,
@@ -62,6 +63,7 @@ pub const TokenType = enum(u32) {
 
     pub fn typeAsString(self: TokenType) []const u8 {
         return switch (self) {
+            .eof => "end of file",
             .invalidChar => "INVALID",
             .unterminatedString => "unterminated string",
 
@@ -151,7 +153,7 @@ pub const Token = struct {
 };
 
 pub const TokenContext = struct {
-    token: ?Token,
+    token: Token,
     newPos: u32,
     lineNumber: u32,
 };
@@ -164,8 +166,8 @@ inline fn str(strStart: u32, strEnd: u32, newPos: u32, lineNumber: u32) TokenCon
 inline fn utstr(strStart: u32, strEnd: u32, newPos: u32, lineNumber: u32) TokenContext {
     return .{ .token = .{ .tokenType = .unterminatedString, .sourceStart = strStart, .sourceEndExclusive = strEnd }, .newPos = newPos, .lineNumber = lineNumber };
 }
-inline fn nulltok(lineNumber: u32) TokenContext {
-    return .{ .token = null, .newPos = 211111, .lineNumber = lineNumber };
+inline fn nulltok(lineNumber: u32, end: u32) TokenContext {
+    return .{ .token = .{ .tokenType = .eof, .sourceStart = end - 1, .sourceEndExclusive = end }, .newPos = end, .lineNumber = lineNumber };
 }
 
 pub const TokenIterator = struct {
@@ -224,10 +226,8 @@ pub const TokenIterator = struct {
 
     pub fn next(self: *TokenIterator, log: *ErrorLog) TokenContext {
         const result = self.peekInternal(log);
-        if (result.token) |_| {
-            self.position = result.newPos;
-            self.lineNumber = result.lineNumber;
-        }
+        self.position = result.newPos;
+        self.lineNumber = result.lineNumber;
         return result;
     }
 
@@ -237,22 +237,19 @@ pub const TokenIterator = struct {
 
     fn peekInternal(self: *TokenIterator, log: *ErrorLog) TokenContext {
         const result = self.scan();
-        if (result.token) |token| {
-            const t = switch (token.tokenType) {
-                .invalidChar => inv: {
-                    log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result);
-                    break :inv token;
-                },
-                .unterminatedString => uns: {
-                    log.push(.unterminatedString, result);
-                    break :uns Token{ .tokenType = .string, .sourceEndExclusive = token.sourceEndExclusive, .sourceStart = token.sourceStart };
-                },
-                else => token,
-            };
-            return TokenContext{ .token = t, .lineNumber = result.lineNumber, .newPos = result.newPos };
-        } else {
-            return result;
-        }
+        const token = result.token;
+        const t = switch (token.tokenType) {
+            .invalidChar => inv: {
+                log.push(.{ .illegalToken = .{ .token = self.exchangeTokenForSource(token) } }, result);
+                break :inv token;
+            },
+            .unterminatedString => uns: {
+                log.push(.unterminatedString, result);
+                break :uns Token{ .tokenType = .string, .sourceEndExclusive = token.sourceEndExclusive, .sourceStart = token.sourceStart };
+            },
+            else => token,
+        };
+        return TokenContext{ .token = t, .lineNumber = result.lineNumber, .newPos = result.newPos };
     }
 
     fn scan(self: *TokenIterator) TokenContext {
@@ -406,7 +403,7 @@ pub const TokenIterator = struct {
             i += 1;
         }
 
-        return nulltok(lineNumber);
+        return nulltok(lineNumber, @truncate(i));
     }
 };
 
@@ -426,6 +423,7 @@ fn isAlphaNumeric(char: u8) bool {
 
 pub fn printToken(iter: *TokenIterator, token: Token, out: std.io.AnyWriter) !void {
     _ = switch (token.tokenType) {
+        .eof => try out.write("EOF  null\n"),
         .bang => try out.write("BANG ! null\n"),
         .bangEqual => try out.write("BANG_EQUAL != null\n"),
         .less => try out.write("LESS < null\n"),
