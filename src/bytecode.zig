@@ -646,7 +646,7 @@ pub const BytecodeGenerator = struct {
     }
 };
 
-pub fn printInstruction(ins: Instruction, out: std.io.AnyWriter) !void {
+pub fn printInstruction(ins: Instruction, out: *std.Io.Writer) !void {
     switch (ins.op.op) {
         .move => switch (ins.op.argType) {
             .bothHandle, .handleALiteralB => try out.print("( MOV HANDLE({d}) ", .{ins.a.item}),

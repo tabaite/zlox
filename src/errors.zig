@@ -144,7 +144,7 @@ pub const ErrorTrace = struct {
     where: ErrorLocation,
     lineNumber: u32,
 
-    pub fn printSelf(self: ErrorTrace, out: std.io.AnyWriter) !void {
+    pub fn printSelf(self: ErrorTrace, out: *std.Io.Writer) !void {
         const location: []u8 = switch (self.where) {
             .eof => @constCast("end of file"),
             .token => |t| @constCast(t.t.tokenType.typeAsString()),
@@ -185,6 +185,7 @@ pub const ErrorTrace = struct {
             .variableAlreadyDefined => _ = try out.write("trying to redefine a variable (shadowing soon i promise)"),
             .functionAlreadyDefined => _ = try out.write("trying to redefine a function (overloading soon i promise)"),
         }
+        try out.flush();
     }
 };
 

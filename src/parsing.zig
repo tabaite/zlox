@@ -626,9 +626,9 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
             const expr = try expressionRule(ctx, codegen, .parenthesis);
 
             // current will be the token following expr
-            const endParen = peekOrInterrupt(ctx, interruptLevel) catch {
+            const endParen = peekOrInterrupt(ctx, interruptLevel) catch |e| {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
-                return .ERR;
+                return e;
             };
             if (endParen.token.tokenType != .rightParen) {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });

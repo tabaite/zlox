@@ -421,7 +421,7 @@ fn isAlphaNumeric(char: u8) bool {
     return isAlpha(char) or isNumeric(char);
 }
 
-pub fn printToken(iter: *TokenIterator, token: Token, out: std.io.AnyWriter) !void {
+pub fn printToken(iter: *TokenIterator, token: Token, out: *std.Io.Writer) !void {
     _ = switch (token.tokenType) {
         .eof => try out.write("EOF  null\n"),
         .bang => try out.write("BANG ! null\n"),
@@ -480,6 +480,7 @@ pub fn printToken(iter: *TokenIterator, token: Token, out: std.io.AnyWriter) !vo
             const src = iter.exchangeTokenForSource(token);
             try out.print("IDENTIFIER {s} null\n", .{src});
         },
-        else => unreachable,
+        else => try out.write("UNKNOWN  null\n"),
     };
+    try out.flush();
 }

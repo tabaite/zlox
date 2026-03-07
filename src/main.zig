@@ -1,5 +1,7 @@
 //! This is just for the actual Lox interpreter program. The actual interpreter is based in root.zig.
 const std = @import("std");
+const Io = std.Io;
+
 const builtin = @import("builtin");
 
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
@@ -41,11 +43,10 @@ pub fn main() !void {
     // first arg will be our program
     _ = args.next();
 
-    const stderr_file = std.io.getStdErr().writer();
-    var bw = std.io.bufferedWriter(stderr_file);
-    defer bw.flush() catch unreachable;
-
-    const stderr = bw.writer();
+    var stderrBuf: [1520]u8 = undefined;
+    var stderrWriter = std.fs.File.stderr().writer(&stderrBuf);
+    const stderr = &stderrWriter.interface;
+    defer stderr.flush() catch @panic("write to stderr failed!");
 
     const operation = functionMap.get(args.next() orelse "") orelse .unknown;
 
@@ -54,26 +55,29 @@ pub fn main() !void {
         return;
     };
 
+    const u32Max = std.math.maxInt(u32);
+
     const contents = reading: {
         const cwd = std.fs.cwd();
-        const file = cwd.openFile(path, .{}) catch {
+        var file = cwd.openFile(path, .{ .mode = .read_only }) catch {
             const cwdDir = try cwd.realpathAlloc(gpa, ".");
             defer gpa.free(cwdDir);
             try stderr.print("File {s} did not exist\nCWD is listed as {s}\n", .{ path, cwdDir });
             return;
         };
         defer file.close();
+        var readerBuffer: [1024]u8 = undefined;
+        var freader = file.reader(&readerBuffer);
+        const reader = &freader.interface;
 
-        const reader = file.reader();
-        break :reading try reader.readAllAlloc(gpa, 2_000_000_000);
+        break :reading reader.allocRemaining(gpa, .limited(u32Max)) catch |e| switch (e) {
+            error.ReadFailed, error.OutOfMemory => return e,
+            error.StreamTooLong => {
+                try stderr.print("file is too large: maximum permissible file size is {d} bytes", .{u32Max});
+                return;
+            },
+        };
     };
-
-    const stderrAny = stderr.any();
-    const u32Max = std.math.maxInt(u32);
-    if (contents.len > u32Max) {
-        try stderrAny.print("file is too large: maximum permissible file size is {d} bytes, file is {d} bytes", .{ u32Max, contents.len });
-    }
-
     defer gpa.free(contents);
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -87,25 +91,21 @@ pub fn main() !void {
     switch (operation) {
         .tokenize => {
             var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
-            defer tokens.deinit();
+            defer tokens.deinit(gpa);
 
             while (true) {
                 const token = iter.next(&errLog).token;
                 if (token.tokenType == .eof) {
+                    _ = try stderr.write("EOF  null\n");
                     break;
                 }
 
                 if (token.tokenType == .invalidChar) {
                     try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, iter.exchangeTokenForSource(token) });
                 } else {
-                    try tokens.append(token);
+                    try scanning.printToken(&iter, token, stderr);
                 }
             }
-
-            for (tokens.items) |t| {
-                try scanning.printToken(&iter, t, stderr.any());
-            }
-            _ = try stderr.write("EOF  null\n");
         },
         .parse => {
             // an expression can never be less than 1 token
@@ -115,15 +115,15 @@ pub fn main() !void {
 
             const errsOrNull = errLog.recover();
             if (errsOrNull) |errs| {
-                try stderrAny.print("found {d} compilation errors:\n", .{errs.len});
+                try stderr.print("found {d} compilation errors:\n", .{errs.len});
                 for (errs) |trace| {
-                    try handleErrorTrace(trace, ctx, stderrAny);
+                    try handleErrorTrace(trace, ctx, stderr);
                 }
                 return;
             }
 
             for (codegen.bytecodeList.items) |ins| {
-                try bytecode.printInstruction(ins, stderrAny);
+                try bytecode.printInstruction(ins, stderr);
             }
         },
         .evaluate => {
@@ -135,9 +135,9 @@ pub fn main() !void {
 
             const errsOrNull = errLog.recover();
             if (errsOrNull) |errs| {
-                try stderrAny.print("found {d} compilation errors:\n", .{errs.len});
+                try stderr.print("found {d} compilation errors:\n", .{errs.len});
                 for (errs) |trace| {
-                    try handleErrorTrace(trace, ctx, stderrAny);
+                    try handleErrorTrace(trace, ctx, stderr);
                 }
                 return;
             }
@@ -146,7 +146,7 @@ pub fn main() !void {
             if (programOrNull) |program| {
                 try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
                 for (program.instructions) |ins| {
-                    try bytecode.printInstruction(ins, stderrAny);
+                    try bytecode.printInstruction(ins, stderr);
                 }
 
                 _ = try stderr.write("\nevaluating\n");
@@ -165,7 +165,7 @@ pub fn main() !void {
     }
 }
 
-fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !void {
+fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
     const iter = ctx.tokenIterator;
 
     const line: []u8, const hlOffset, const hlLen = a: {
@@ -193,13 +193,19 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, out: std.io.AnyWriter) !voi
         }
     };
     const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };
-    try out.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
-    try out.print("{d}: ", .{trace.lineNumber});
-    _ = try out.write("\x1b[31;1m");
-    try out.writeByteNTimes('-', hlOffset);
-    try out.writeByteNTimes('^', hlLen);
-    _ = try out.write("\x1b[0m\n");
 
-    try trace.printSelf(out);
-    try out.writeByteNTimes('\n', 2);
+    try writer.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
+    try writer.print("{d}: ", .{trace.lineNumber});
+    _ = try writer.write("\x1b[31;1m");
+    for (0..hlOffset) |_| {
+        try writer.writeByte('-');
+    }
+    for (0..hlLen) |_| {
+        try writer.writeByte('^');
+    }
+    _ = try writer.write("\x1b[0m\n");
+
+    try trace.printSelf(writer);
+    _ = try writer.write("\n\n");
+    try writer.flush();
 }
