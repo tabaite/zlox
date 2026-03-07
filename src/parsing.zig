@@ -187,7 +187,6 @@ pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) void {
 }
 
 fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
-    const dprint = std.debug.print;
     const iter = ctx.tokenIterator;
     _ = filterCurrentTokenOrErr(.kwFun, ctx, .eof) catch {};
     advance(ctx);
@@ -316,7 +315,6 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     _ = blockRule(ctx, codegen);
     // works even if we don't enter the function
     codegen.exitFunction(ctx);
-    dprint("done fn decl, iter at pos {d}\n", .{ctx.tokenIterator.position});
 }
 
 fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {

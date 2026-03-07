@@ -107,6 +107,9 @@ pub fn main() !void {
 
     defer errLog.deinit(astAlloc);
 
+    if (try tryPrintErrors(ctx, stderr)) {
+        return;
+    }
     if (pipeline.printTokens) {
         var cloneIter = scanning.TokenIterator.init(contents);
         while (true) {
@@ -123,9 +126,7 @@ pub fn main() !void {
             }
         }
     }
-
     if (pipeline.maxStage.asInt() < ProgramStage.parse.asInt()) {
-        try tryPrintErrors(ctx, stderr);
         return;
     }
 
@@ -134,6 +135,9 @@ pub fn main() !void {
 
     parsing.parseAndCompileAll(ctx, &codegen);
 
+    if (try tryPrintErrors(ctx, stderr)) {
+        return;
+    }
     if (pipeline.printInstructions) {
         _ = try stderr.write("\nbytecode:\n");
         for (codegen.bytecodeList.items) |ins| {
@@ -141,9 +145,7 @@ pub fn main() !void {
         }
         _ = try stderr.write("\n");
     }
-
     if (pipeline.maxStage.asInt() < ProgramStage.evaluate.asInt()) {
-        try tryPrintErrors(ctx, stderr);
         return;
     }
 
@@ -157,10 +159,11 @@ pub fn main() !void {
             try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
         }
     }
-    try tryPrintErrors(ctx, stderr);
+
+    _ = try tryPrintErrors(ctx, stderr);
 }
 
-fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !void {
+fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !bool {
     const log = ctx.log;
     const errsOrNull = log.recover();
     if (errsOrNull) |errs| {
@@ -168,6 +171,9 @@ fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !void {
         for (errs) |trace| {
             try handleErrorTrace(trace, ctx, stderr);
         }
+        return true;
+    } else {
+        return false;
     }
 }
 
