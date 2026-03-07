@@ -200,10 +200,14 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
     };
     const lineBeforeHl, const lineHl, const lineAfterHl = .{ line[0..hlOffset], line[hlOffset .. hlOffset + hlLen], line[hlOffset + hlLen ..] };
 
-    try writer.print("error:\n{d}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ trace.lineNumber, lineBeforeHl, lineHl, lineAfterHl });
-    try writer.print("{d}: ", .{trace.lineNumber});
+    // 4_294_967_295
+    var intParseBuffer: [11]u8 = undefined;
+    const intParsedLen = std.fmt.printInt(&intParseBuffer, trace.lineNumber, 10, .upper, .{});
+
+    try writer.print("error:\n{s}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ intParseBuffer[0..intParsedLen], lineBeforeHl, lineHl, lineAfterHl });
     _ = try writer.write("\x1b[31;1m");
-    for (0..hlOffset) |_| {
+    // the two extra characters are the colon + space
+    for (0..hlOffset + intParsedLen + 2) |_| {
         try writer.writeByte('-');
     }
     for (0..hlLen) |_| {
