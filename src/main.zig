@@ -17,17 +17,27 @@ const ErrorTrace = errors.ErrorTrace;
 
 const Context = context.Context;
 
-pub const ProgramFunction = enum {
-    unknown,
-    tokenize,
-    parse,
-    evaluate,
+pub const ProgramStage = enum(u32) {
+    none = 0,
+    tokenize = 1,
+    parse = 2,
+    evaluate = 3,
+
+    pub fn asInt(self: ProgramStage) u32 {
+        return @intFromEnum(self);
+    }
 };
 
-pub const functionMap = std.StaticStringMap(ProgramFunction).initComptime(.{
-    .{ "tokenize", .tokenize },
-    .{ "parse", .parse },
-    .{ "evaluate", .evaluate },
+pub const ProgramPipeline = struct {
+    maxStage: ProgramStage,
+    printTokens: bool = false,
+    printInstructions: bool = false,
+};
+
+pub const pipelineMap = std.StaticStringMap(ProgramPipeline).initComptime(.{
+    .{ "tokenize", ProgramPipeline{ .maxStage = .tokenize, .printTokens = true } },
+    .{ "parse", ProgramPipeline{ .maxStage = .parse, .printInstructions = true } },
+    .{ "evaluate", ProgramPipeline{ .maxStage = .evaluate } },
 });
 
 pub fn main() !void {
@@ -48,7 +58,10 @@ pub fn main() !void {
     const stderr = &stderrWriter.interface;
     defer stderr.flush() catch @panic("write to stderr failed!");
 
-    const operation = functionMap.get(args.next() orelse "") orelse .unknown;
+    const pipeline = pipelineMap.get(args.next() orelse "") orelse {
+        try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});
+        return;
+    };
 
     const path = args.next() orelse {
         _ = try stderr.write("No file provided!");
@@ -80,6 +93,10 @@ pub fn main() !void {
     };
     defer gpa.free(contents);
 
+    if (pipeline.maxStage.asInt() < ProgramStage.tokenize.asInt()) {
+        return;
+    }
+
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const astAlloc = arena.allocator();
@@ -88,80 +105,69 @@ pub fn main() !void {
     var errLog = try ErrorLog.init(astAlloc);
     const ctx = Context{ .tokenIterator = &iter, .log = &errLog };
 
-    switch (operation) {
-        .tokenize => {
-            var tokens = try std.ArrayList(scanning.Token).initCapacity(gpa, contents.len);
-            defer tokens.deinit(gpa);
+    defer errLog.deinit(astAlloc);
 
-            while (true) {
-                const token = iter.next(&errLog).token;
-                if (token.tokenType == .eof) {
-                    _ = try stderr.write("EOF  null\n");
-                    break;
-                }
-
-                if (token.tokenType == .invalidChar) {
-                    try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, iter.exchangeTokenForSource(token) });
-                } else {
-                    try scanning.printToken(&iter, token, stderr);
-                }
-            }
-        },
-        .parse => {
-            // an expression can never be less than 1 token
-            var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
-
-            parsing.parseAndCompileAll(ctx, &codegen);
-
-            const errsOrNull = errLog.recover();
-            if (errsOrNull) |errs| {
-                try stderr.print("found {d} compilation errors:\n", .{errs.len});
-                for (errs) |trace| {
-                    try handleErrorTrace(trace, ctx, stderr);
-                }
-                return;
+    if (pipeline.printTokens) {
+        var cloneIter = scanning.TokenIterator.init(contents);
+        while (true) {
+            const token = cloneIter.next(&errLog).token;
+            if (token.tokenType == .eof) {
+                _ = try stderr.write("EOF  null\n");
+                break;
             }
 
-            for (codegen.bytecodeList.items) |ins| {
-                try bytecode.printInstruction(ins, stderr);
+            if (token.tokenType == .invalidChar) {
+                try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ iter.lineNumber, iter.exchangeTokenForSource(token) });
+            } else {
+                try scanning.printToken(&iter, token, stderr);
             }
-        },
-        .evaluate => {
-            var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
+        }
+    }
 
-            _ = try stderr.write("\nbytecode:\n");
+    if (pipeline.maxStage.asInt() < ProgramStage.parse.asInt()) {
+        try tryPrintErrors(ctx, stderr);
+        return;
+    }
 
-            parsing.parseAndCompileAll(ctx, &codegen);
+    // an expression can never be less than 1 token
+    var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
 
-            const errsOrNull = errLog.recover();
-            if (errsOrNull) |errs| {
-                try stderr.print("found {d} compilation errors:\n", .{errs.len});
-                for (errs) |trace| {
-                    try handleErrorTrace(trace, ctx, stderr);
-                }
-                return;
-            }
+    parsing.parseAndCompileAll(ctx, &codegen);
 
-            const programOrNull = codegen.finalize(ctx);
-            if (programOrNull) |program| {
-                try stderr.print("( ENTRY POINT {d} )\n", .{program.entryPoint});
-                for (program.instructions) |ins| {
-                    try bytecode.printInstruction(ins, stderr);
-                }
+    if (pipeline.printInstructions) {
+        _ = try stderr.write("\nbytecode:\n");
+        for (codegen.bytecodeList.items) |ins| {
+            try bytecode.printInstruction(ins, stderr);
+        }
+        _ = try stderr.write("\n");
+    }
 
-                _ = try stderr.write("\nevaluating\n");
-                var rt = try runtime.Runtime.init(astAlloc, gpa);
-                defer rt.deinit(astAlloc);
-                rt.run(program);
+    if (pipeline.maxStage.asInt() < ProgramStage.evaluate.asInt()) {
+        try tryPrintErrors(ctx, stderr);
+        return;
+    }
 
-                if (rt.variableStack.used > 2) {
-                    try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
-                }
-            }
-        },
-        .unknown => {
-            try stderr.print("Usage: ./your_program ( tokenize | parse | evaluate ) <filename>\n", .{});
-        },
+    const programOrNull = codegen.finalize(ctx);
+    if (programOrNull) |program| {
+        var rt = try runtime.Runtime.init(astAlloc, gpa);
+        defer rt.deinit(astAlloc);
+        rt.run(program);
+
+        if (rt.variableStack.used > 2) {
+            try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
+        }
+    }
+    try tryPrintErrors(ctx, stderr);
+}
+
+fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !void {
+    const log = ctx.log;
+    const errsOrNull = log.recover();
+    if (errsOrNull) |errs| {
+        try stderr.print("found {d} compilation errors:\n", .{errs.len});
+        for (errs) |trace| {
+            try handleErrorTrace(trace, ctx, stderr);
+        }
     }
 }
 

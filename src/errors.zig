@@ -200,6 +200,9 @@ pub const ErrorLog = struct {
             .used = 0,
         };
     }
+    pub fn deinit(self: *ErrorLog, allocator: Allocator) void {
+        allocator.free(self.backing);
+    }
 
     pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
         const trace: ErrorTrace = .{ .err = err, .where = if (context.token.tokenType != .eof) .{ .token = .{ .t = context.token } } else .eof, .lineNumber = context.lineNumber };
