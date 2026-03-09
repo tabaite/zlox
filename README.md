@@ -17,10 +17,6 @@ when the variable doesn't exist) can just send back some junk. yay!
 
 todo:
 - TRACY INTEGRATION
-- strip leading whitespace from error lines
-  this will improve readability in cases where lots of indenting is present.
-- make error highlights not display line number
-  it's a stupid hack to align it with the line.
 - add compiler "hints"
   probably pass in an object to error handling functions that can render any associated hints + underlines
   example:
