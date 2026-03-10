@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) void {
             bool,
             "on_demand",
             "Build tracy with TRACY_ON_DEMAND",
-        ) orelse ztracy_enabled_default,
+        ) orelse false,
     };
 
     const exe = b.addExecutable(.{

@@ -1,5 +1,6 @@
 //! This is just for the actual Lox interpreter program. The actual interpreter is based in root.zig.
 const std = @import("std");
+const ztracy = @import("ztracy");
 const Io = std.Io;
 
 const builtin = @import("builtin");
@@ -41,6 +42,12 @@ pub const pipelineMap = std.StaticStringMap(ProgramPipeline).initComptime(.{
 });
 
 pub fn main() !void {
+    ztracy.FrameMarkStart("runtime");
+    defer ztracy.FrameMarkEnd("runtime");
+
+    const mainZone = ztracy.ZoneN(@src(), "main function");
+    defer mainZone.End();
+
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
     const gpa = switch (builtin.mode) {
