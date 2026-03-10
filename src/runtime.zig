@@ -1,6 +1,7 @@
 // Any type value that is not the given built-in values is
 // a user-defined class.
 const prelude = @import("prelude.zig");
+const ztracy = @import("ztracy");
 const std = prelude.std;
 const bytecode = @import("bytecode.zig");
 const errors = @import("errors.zig");
@@ -56,6 +57,9 @@ pub const Runtime = struct {
     }
 
     pub fn run(self: *Runtime, program: bytecode.Program) void {
+        const rtRunZone = ztracy.ZoneN(@src(), "execute compiled program");
+        defer rtRunZone.End();
+
         // Null handle
         _ = self.variableStack.push(Operand{ .item = 0 });
         // Return handle

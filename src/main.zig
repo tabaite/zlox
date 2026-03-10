@@ -50,10 +50,11 @@ pub fn main() !void {
 
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
-    const gpa = switch (builtin.mode) {
+    var tracy = ztracy.TracyAllocator.init(switch (builtin.mode) {
         .Debug => debug.allocator(),
         .ReleaseFast, .ReleaseSafe, .ReleaseSmall => std.heap.c_allocator,
-    };
+    });
+    const gpa = tracy.allocator();
 
     var args = try std.process.argsWithAllocator(gpa);
     defer args.deinit();
@@ -78,6 +79,9 @@ pub fn main() !void {
     const u32Max = std.math.maxInt(u32);
 
     const contents = reading: {
+        const fopenZone = ztracy.ZoneN(@src(), "read source file contents");
+        defer fopenZone.End();
+
         const cwd = std.fs.cwd();
         var file = cwd.openFile(path, .{ .mode = .read_only }) catch {
             const cwdDir = try cwd.realpathAlloc(gpa, ".");
@@ -118,6 +122,9 @@ pub fn main() !void {
         return;
     }
     if (pipeline.printTokens) {
+        const printTokensZone = ztracy.ZoneN(@src(), "print token list");
+        defer printTokensZone.End();
+
         var cloneIter = scanning.TokenIterator.init(contents);
         while (true) {
             const token = cloneIter.next(&errLog).token;
@@ -146,6 +153,9 @@ pub fn main() !void {
         return;
     }
     if (pipeline.printInstructions) {
+        const printInsZone = ztracy.ZoneN(@src(), "print instruction list");
+        defer printInsZone.End();
+
         _ = try stderr.write("\nbytecode:\n");
         for (codegen.bytecodeList.items) |ins| {
             try bytecode.printInstruction(ins, stderr);
@@ -174,6 +184,9 @@ fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !bool {
     const log = ctx.log;
     const errsOrNull = log.recover();
     if (errsOrNull) |errs| {
+        const tryPrintErrorZone = ztracy.ZoneN(@src(), "print compilation errors");
+        defer tryPrintErrorZone.End();
+
         try stderr.print("found {d} compilation errors:\n", .{errs.len});
         for (errs) |trace| {
             try handleErrorTrace(trace, ctx, stderr);
@@ -185,6 +198,9 @@ fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !bool {
 }
 
 fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
+    const handleTraceZone = ztracy.ZoneN(@src(), "print error trace");
+    defer handleTraceZone.End();
+
     const iter = ctx.tokenIterator;
 
     const line: []u8, const hlOffset, const hlLen = a: {
