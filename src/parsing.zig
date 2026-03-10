@@ -2,6 +2,7 @@ const scanning = @import("scanning.zig");
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
 const context = @import("context.zig");
+const ztracy = @import("ztracy");
 
 const MAX_ARGS = bytecode.MAX_ARGS;
 const Token = scanning.Token;
@@ -178,6 +179,9 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interrup
 // The function mutates the state of the parser, moving the position forward
 // to the token immediately after the expression it returns.
 pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) void {
+    const parseZone = ztracy.ZoneN(@src(), "parse + compile");
+    defer parseZone.End();
+
     while (peekOrInterrupt(ctx, .eof)) |_| {
         functionDeclarationRule(ctx, codegen);
     } else |_| {}

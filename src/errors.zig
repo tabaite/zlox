@@ -1,4 +1,5 @@
 const std = @import("std");
+const ztracy = @import("ztracy");
 
 // i love circular imports!
 const parsing = @import("parsing.zig");
@@ -195,6 +196,9 @@ pub const ErrorLog = struct {
     used: usize,
 
     pub fn init(allocator: Allocator) !ErrorLog {
+        const parseZone = ztracy.ZoneN(@src(), "init error log");
+        defer parseZone.End();
+
         return .{
             .backing = try allocator.alloc(ErrorTrace, BACKINGSIZE),
             .used = 0,
@@ -205,12 +209,18 @@ pub const ErrorLog = struct {
     }
 
     pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
+        const parseZone = ztracy.ZoneN(@src(), "push error to error log");
+        defer parseZone.End();
+
         const trace: ErrorTrace = .{ .err = err, .where = if (context.token.tokenType != .eof) .{ .token = .{ .t = context.token } } else .eof, .lineNumber = context.lineNumber };
         self.backing[self.used] = trace;
         self.used += 1;
     }
 
     pub fn pushTokenRange(self: *ErrorLog, err: Error, start: TokenContext, endInclusive: TokenContext) void {
+        const parseZone = ztracy.ZoneN(@src(), "push error to error log");
+        defer parseZone.End();
+
         const u32Max = std.math.maxInt(u32);
         const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
         const rangeEnd = if (endInclusive.token) |t| t.sourceEndExclusive else u32Max;
@@ -219,6 +229,9 @@ pub const ErrorLog = struct {
         self.used += 1;
     }
     pub fn pushTokenRangeEndExlusive(self: *ErrorLog, err: Error, start: TokenContext, endExclusive: TokenContext) void {
+        const parseZone = ztracy.ZoneN(@src(), "push error to error log");
+        defer parseZone.End();
+
         const u32Max = std.math.maxInt(u32);
         const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
         const rangeEnd = if (endExclusive.token) |t| t.sourceStart else u32Max;
@@ -228,6 +241,9 @@ pub const ErrorLog = struct {
     }
 
     pub fn recover(self: ErrorLog) ?[]ErrorTrace {
+        const parseZone = ztracy.ZoneN(@src(), "recover error information");
+        defer parseZone.End();
+
         if (self.used == 0) {
             return null;
         } else {

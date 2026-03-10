@@ -15,16 +15,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe_mod.addImport("libzlox", lib_mod);
-
-    const lib = b.addLibrary(.{
-        .linkage = .static,
-        .name = "libzlox",
-        .root_module = lib_mod,
-    });
-
-    b.installArtifact(lib);
-
     const ztracy_enabled_default = switch (optimize) {
         .Debug => true,
         else => false,
@@ -47,17 +37,29 @@ pub fn build(b: *std.Build) void {
         ) orelse false,
     };
 
-    const exe = b.addExecutable(.{
-        .name = "zlox",
-        .root_module = exe_mod,
-    });
-    exe.linkLibC();
-
     const ztracy = b.dependency("ztracy", .{
         .enable_ztracy = ztracy_options.enable_ztracy,
         .enable_fibers = ztracy_options.enable_fibers,
         .on_demand = ztracy_options.on_demand,
     });
+
+    lib_mod.addImport("ztracy", ztracy.module("root"));
+
+    const lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "libzlox",
+        .root_module = lib_mod,
+    });
+
+    exe_mod.addImport("libzlox", lib_mod);
+
+    b.installArtifact(lib);
+
+    const exe = b.addExecutable(.{
+        .name = "zlox",
+        .root_module = exe_mod,
+    });
+    exe.linkLibC();
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
     b.installArtifact(exe);
