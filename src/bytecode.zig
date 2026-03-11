@@ -3,6 +3,7 @@ const std = prelude.std;
 // circular imports are allowed!!!
 const parsing = @import("parsing.zig");
 const context = @import("context.zig");
+const ztracy = @import("ztracy");
 
 const Stack = prelude.Stack;
 const Context = context.Context;
@@ -220,6 +221,8 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn init(allocator: Allocator) !BytecodeGenerator {
+        const tracyZone = ztracy.ZoneN(@src(), "init bytecode generator");
+        defer tracyZone.End();
         return BytecodeGenerator{
             .currentFunction = null,
             .allocator = allocator,
@@ -250,6 +253,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn enterFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []ArgInfo, retType: Type) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode enter function");
+        defer tracyZone.End();
+
         if (self.currentFunction != null) {
             @panic("Nested function parsed! This should not happen due to parsing restrictions");
         }
@@ -306,6 +312,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn exitFunction(self: *BytecodeGenerator, ctx: Context) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode exit function");
+        defer tracyZone.End();
+
         defer self.currentFunction = null;
         if (self.currentFunction) |f| {
             if (!f.returnsOnAllPaths) {
@@ -327,10 +336,16 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn enterScope(self: *BytecodeGenerator) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode enter scope");
+        defer tracyZone.End();
+
         self.scopeExtentStack.push(.{});
     }
 
     pub fn exitScope(self: *BytecodeGenerator) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode exit scope");
+        defer tracyZone.End();
+
         const num: ScopeExtent = self.scopeExtentStack.pop() orelse .{};
         for (0..num.numVars) |_| {
             const name = self.scopeNamesStack.pop() orelse break;
@@ -342,6 +357,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn callFunction(self: *BytecodeGenerator, ctx: Context, name: []u8, args: []HandledOperand) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert fn call");
+        defer tracyZone.End();
+
         const func = self.functionRegistry.get(name) orelse {
             ctx.pushError(.{ .functionNotDefined = .{ .name = name } });
             return .ERR;
@@ -390,6 +408,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn registerVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, typeInfo: NewVariableTypeInfo) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode define variable");
+        defer tracyZone.End();
+
         const res = allocatorMust(std.StringHashMapUnmanaged(HandledOperand).GetOrPutResult, self.variableRegistry.getOrPut(self.allocator, name));
         if (!res.found_existing) {
             self.scopeNamesStack.push(name);
@@ -406,6 +427,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn getVariable(self: *BytecodeGenerator, ctx: Context, name: []u8) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode get variable");
+        defer tracyZone.End();
+
         return self.variableRegistry.get(name) orelse {
             ctx.pushError(.{ .variableNotDefined = .{ .name = name } });
             return .ERR;
@@ -413,6 +437,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn updateVariable(self: *BytecodeGenerator, ctx: Context, name: []u8, new: HandledOperand) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert variable update");
+        defer tracyZone.End();
+
         const handle = self.variableRegistry.getPtr(name) orelse {
             ctx.pushError(.{ .variableNotDefined = .{ .name = name } });
             return .ERR;
@@ -426,6 +453,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn insertFunctionReturn(self: *BytecodeGenerator, ctx: Context, val: HandledOperand) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert fn return");
+        defer tracyZone.End();
+
         const f = self.currentFunction orelse return;
         self.currentFunction.?.returnsOnAllPaths = true;
         if (val.type != f.retType) {
@@ -440,6 +470,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn moveOperand(self: *BytecodeGenerator, item: HandledOperand, dest: HandledOperand) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert move");
+        defer tracyZone.End();
+
         switch (dest.type) {
             .boolLit, .numberLit => @panic("Trying to move into a literal..? (this should not happen due to parsing)"),
             else => {},
@@ -459,11 +492,17 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn popFromStack(self: *BytecodeGenerator) void {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert pop");
+        defer tracyZone.End();
+
         self.stackHeight -= 1;
         allocatorMust(void, self.bytecodeList.append(self.allocator, .{ .op = .{ .op = .pop, .argType = .bothHandle }, .a = .{ .item = 0 }, .b = .{ .item = 0 }, .dest = 0 }));
     }
     // name is only used for debugging currently
     pub fn pushOperand(self: *BytecodeGenerator, ctx: Context, debugName: []u8, info: NewVariableTypeInfo) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert push item");
+        defer tracyZone.End();
+
         // This can store any (built-in) type.
         const variableSize = 1;
         const InitializeInformation = struct { value: HandledOperand, type: Type };
@@ -529,6 +568,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn pushBinaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.BinaryExprType, a: HandledOperand, b: HandledOperand) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert binary op");
+        defer tracyZone.End();
+
         const InsInfo = struct {
             op: Operation,
             dest: HandledOperand,
@@ -593,6 +635,9 @@ pub const BytecodeGenerator = struct {
     }
 
     pub fn pushUnaryOperation(self: *BytecodeGenerator, ctx: Context, op: parsing.UnaryExprType, a: HandledOperand) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode insert unary op");
+        defer tracyZone.End();
+
         const res: Operation = switch (op) {
             .negate => switch (a.type) {
                 .number => .{ .op = .negateNumber, .argType = .bothHandle },
@@ -617,6 +662,9 @@ pub const BytecodeGenerator = struct {
         return dest;
     }
     pub fn newStringLit(self: *BytecodeGenerator, string: []u8) HandledOperand {
+        const tracyZone = ztracy.ZoneN(@src(), "bytecode allocate new string lit");
+        defer tracyZone.End();
+
         // allocate shit ig
         const strStart = self.stringBuffer.items.len;
         allocatorMust(void, self.stringBuffer.appendSlice(self.allocator, string));
