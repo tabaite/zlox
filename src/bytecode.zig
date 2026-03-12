@@ -268,36 +268,19 @@ pub const BytecodeGenerator = struct {
             }
             self.entryPoint = @enumFromInt(self.bytecodeList.items.len + 1);
         }
-        std.debug.print("function \"{s}\" ( ", .{name});
-
         for (0..args.len) |i| {
+            const argZone = ztracy.ZoneN(@src(), "bytecode process function arg");
+            defer argZone.End();
+
             const arg = args[i];
             allocatorMust(void, self.variableRegistry.put(
                 self.allocator,
                 arg.name,
                 .{ .type = arg.type, .operand = .{ .item = @as(u64, @intCast(self.stackHeight)) + @as(u64, @intCast(i)) } },
             ));
-
-            const ty = switch (arg.type) {
-                .nil => "void",
-                .number, .numberLit => "num",
-                .bool, .boolLit => "bool",
-                .string => "string",
-                .errorType => "ERROR TYPE (man idk)",
-            };
-
-            std.debug.print("({s}: {s}) ", .{ arg.name, ty });
         }
         // "push" args, we add one so that the handles resume usage after the args
         self.stackHeight += @truncate(args.len);
-        const ty = switch (retType) {
-            .nil => "void",
-            .number, .numberLit => "num",
-            .bool, .boolLit => "bool",
-            .string => "string",
-            .errorType => "err idk",
-        };
-        std.debug.print(") RETURNS {s}\n", .{ty});
 
         // When the function exits, then we will release this memory.
         const argsDuped = allocatorMust([]ArgInfo, self.allocator.dupe(ArgInfo, args));
