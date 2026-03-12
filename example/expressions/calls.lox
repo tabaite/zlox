@@ -1,9 +1,11 @@
-var x = 17;
+fn main() {
+    var x = 17;
 
-print(
-    recurse(
-        recurse(x-1),
-        recurse(x-2)
-    ),
-    "search"
-);
+    print(
+        recurse(
+            recurse(x-1),
+            recurse(x-2)
+        ),
+        "search"
+    );   
+}

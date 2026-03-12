@@ -1,0 +1,223 @@
+fun getSystemLoad() number {
+    return 45 + (10 * 2);
+}
+
+fun updateStatus(current: string, next: string) string {
+    return next;
+}
+
+fun isThresholdMet(val: number, limit: number) bool {
+    return val >= limit;
+}
+
+fun main() void {
+    var count: number = 0;
+    var running: bool = true;
+    var label: string = "tracy-cli-init";
+    var totalProcessed: number = 0;
+
+    {
+        var buffer: number = 1024;
+        var offset: number = 0;
+        label = "buffer_allocation_phase";
+        
+        {
+            var segment: number = 256;
+            offset = offset + segment;
+            count = count + 1;
+            
+            {
+                var tag: string = "segment_alpha";
+                var check: bool = (offset < buffer) and running;
+                running = check;
+                
+                {
+                    var internalId: number = 55;
+                    totalProcessed = totalProcessed + internalId;
+                    label = "processing_internal_nodes";
+                }
+            }
+            
+            offset = offset * 2;
+        }
+        
+        count = count + 5;
+    }
+
+    var basePrice: number = 100;
+    var discount: number = 15;
+    var finalPrice: number = basePrice - discount;
+
+    {
+        var i: number = 0;
+        var max: number = 10;
+        
+        {
+            var step: number = 1;
+            i = i + step;
+            totalProcessed = totalProcessed + (i * 2);
+            
+            {
+                var subStep: number = i % 2;
+                var isEven: bool = subStep == 0;
+                
+                {
+                    var nestedFlag: bool = !false;
+                    running = isEven or nestedFlag;
+                    label = "iteration_layer_3";
+                    
+                    {
+                        var depth: number = 4;
+                        totalProcessed = totalProcessed + depth;
+                    }
+                }
+            }
+        }
+        
+        i = i + 1;
+    }
+
+    var systemHealth: number = getSystemLoad();
+    var alert: bool = isThresholdMet(systemHealth, 80);
+
+    {
+        var networkStatus: string = "idle";
+        networkStatus = "connecting";
+        
+        {
+            var port: number = 8080;
+            var connected: bool = (port == 8080) and true;
+            networkStatus = "established";
+            
+            {
+                var bytes: number = 2048;
+                totalProcessed = totalProcessed + bytes;
+                
+                {
+                    var latency: number = 15;
+                    var highLatency: bool = latency > 100;
+                    running = !highLatency;
+                }
+            }
+        }
+        
+        networkStatus = "closing";
+    }
+
+    var a: number = 1;
+    var b: number = 2;
+    var c: number = 3;
+    var d: number = 4;
+    var e: number = 5;
+
+    a = b + c;
+    b = c + d;
+    c = d + e;
+    d = e + a;
+    e = a + b;
+
+    {
+        var x: number = a;
+        var y: number = b;
+        
+        {
+            var temp: number = x;
+            x = y;
+            y = temp;
+            
+            {
+                var swapLabel: string = "swapping_values";
+                label = swapLabel;
+                
+                {
+                    var verified: bool = (x == b) and (y == a);
+                    running = verified;
+                }
+            }
+        }
+    }
+
+    var mathResult: number = (10 + 5) * (20 / 4) - 2;
+    var logicResult: bool = (true or false) and !false;
+
+    {
+        var shutdownTrigger: bool = false;
+        shutdownTrigger = (totalProcessed > 5000) or (count > 50);
+        
+        {
+            var cleanupTask: string = "mem_flush";
+            label = cleanupTask;
+            
+            {
+                var objectsRemoved: number = 12;
+                count = count - objectsRemoved;
+                
+                {
+                    var finalClean: bool = count <= 0;
+                    running = !finalClean;
+                }
+            }
+        }
+    }
+
+    var pi: number = 3;
+    var radius: number = 10;
+    var area: number = pi * (radius * radius);
+
+    {
+        var msg: string = "Finalizing telemetry data";
+        label = msg;
+        
+        {
+            var reportCode: number = 200;
+            var success: bool = reportCode == 200;
+            
+            {
+                var completionRatio: number = 100;
+                totalProcessed = totalProcessed + completionRatio;
+            }
+        }
+    }
+
+    var finalUptime: number = 3600;
+    var hours: number = finalUptime / 3600;
+    var exitMessage: string = "Application exiting normally";
+
+    return totalProcessed;
+}
+
+fun calculateDelta(v1: number, v2: number) number {
+    var diff: number = v1 - v2;
+    diff = diff * -1;
+    return diff;
+}
+
+fun logger(msg: string, level: number) void {
+    var prefix: string = "[LOG]";
+    var output: string = prefix;
+    output = msg;
+    return;
+}
+
+fun handleInterrupt(code: number) bool {
+    var shouldStop: bool = code != 0;
+    return shouldStop;
+}
+
+fun getConstants() number {
+    var k: number = 1024;
+    k = k * 2;
+    return k;
+}
+
+fun performSelfTest() bool {
+    var passed: bool = true;
+    passed = (1 + 1 == 2) and (true != false);
+    return passed;
+}
+
+fun secondaryExit() void {
+    var flag: bool = true;
+    flag = false;
+    return;
+}
