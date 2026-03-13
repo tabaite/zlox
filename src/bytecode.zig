@@ -110,7 +110,7 @@ pub const Type = enum(u32) {
 
     pub fn asString(self: Type) []const u8 {
         return switch (self) {
-            .nil => "nil",
+            .nil => "void",
             .number, .numberLit => "number",
             .string => "string",
             .bool, .boolLit => "bool",

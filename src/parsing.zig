@@ -53,6 +53,13 @@ pub const BinaryExprType = enum {
 pub const UnaryExprType = enum {
     negate,
     negateBool,
+
+    pub fn asVerb(self: UnaryExprType) []const u8 {
+        return switch (self) {
+            .negate => "negation",
+            .negateBool => "binary-not",
+        };
+    }
 };
 
 const TokenToBinaryExpr = struct {
@@ -398,7 +405,9 @@ fn returnRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
         return .{ .returnsOnAllPaths = false };
     }
     advance(ctx);
-    codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .semicolon));
+    if (peekOrInterrupt(ctx, .semicolon)) |_| {
+        codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .semicolon));
+    } else |_| {}
     return .{ .returnsOnAllPaths = true };
 }
 
@@ -564,8 +573,11 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
     }
     advance(ctx);
     const startParen = peekOrInterrupt(ctx, interruptLevel) catch {
-        _ = filterCurrentTokenOrErr(.leftParen, ctx, interruptLevel) catch {};
-        return Handle.NIL;
+        // same as variable
+        const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
+        defer tracyZone.End();
+
+        return codegen.getVariable(ctx, iter.exchangeTokenForSource(nameCtx.token));
     };
 
     if (startParen.token.tokenType == .leftParen) {

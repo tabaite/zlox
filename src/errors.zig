@@ -166,11 +166,11 @@ pub const ErrorTrace = struct {
             .argLimitExceeded => _ = try out.write("argument limit for functions exceeded"),
             .argumentTypeCannotBeVoid => _ = try out.write("arguments must not be type 'void'"),
 
-            .incompatibleTypeUnary => _ = try out.write("incompatible type (unary)"),
-            .incompatibleTypeBinary => |b| try out.print("cannot perform operation {s} on operands of type {s} and {s}", .{ b.operation.asVerb(), b.lhsType.asString(), b.rhsType.asString() }),
-            .incompatibleTypeInitialValue => _ = try out.write("incompatible type (initial value)"),
-            .incompatibleTypeReturn => _ = try out.write("incompatible type (return value)"),
-            .argumentTypeIncorrect => _ = try out.write("incompatible type (provided argument)"),
+            .incompatibleTypeUnary => |u| try out.print("cannot perform {s} on operand of type {s}", .{ u.operation.asVerb(), u.foundType.asString() }),
+            .incompatibleTypeBinary => |b| try out.print("cannot perform {s} on operands of type {s} and {s}", .{ b.operation.asVerb(), b.lhsType.asString(), b.rhsType.asString() }),
+            .incompatibleTypeInitialValue => |t| _ = try out.print("initial value is incompatible: expected type {s} but found value of type {s}", .{ t.expectedType.asString(), t.foundType.asString() }),
+            .incompatibleTypeReturn => |t| try out.print("return value is type {s}, but function expects value of type {s}", .{ t.foundType.asString(), t.expectedType.asString() }),
+            .argumentTypeIncorrect => |t| try out.print("provided argument type is incompatible: expected {s}, found {s}", .{ t.expected.asString(), t.found.asString() }),
 
             .mainFunctionNotDeclared => _ = try out.write("must declare a main function"),
             .mainFunctionCannotHaveReturnType => _ = try out.write("main function must not return a value"),
