@@ -18,6 +18,9 @@
 // expression list (actual tree part):
 // [ ... (expr) -- (expr.inner) ... ]
 //         --------------^
+//
+// argument list (just for storing indices of arguments)
+// [ ... (argstart) -- (n) -- (argend) ... ]
 // expr (union):
 //  - grouping: ( inner )
 //  - binary: left ( + | - | * | / | ... ) right

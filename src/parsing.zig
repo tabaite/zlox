@@ -676,7 +676,8 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
             const expr = try expressionRule(ctx, codegen, .parenthesis);
 
             // current will be the token following expr
-            const endParen = peekOrInterrupt(ctx, interruptLevel) catch |e| {
+            // the only other interrupt level above semicolon is right paren, which we don't want to interfere with our stuff
+            const endParen = peekOrInterrupt(ctx, .semicolon) catch |e| {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
                 return e;
             };
@@ -684,7 +685,6 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
                 return .ERR;
             }
-            advance(ctx);
             break :grouping expr;
         },
         .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, iter.exchangeTokenForSource(tok.token)) catch 0),
