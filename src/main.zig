@@ -61,7 +61,7 @@ pub fn main() !void {
     // first arg will be our program
     _ = args.next();
 
-    var stderrBuf: [1520]u8 = undefined;
+    var stderrBuf: [4096]u8 = undefined;
     var stderrWriter = std.fs.File.stderr().writer(&stderrBuf);
     const stderr = &stderrWriter.interface;
     defer stderr.flush() catch @panic("write to stderr failed!");
