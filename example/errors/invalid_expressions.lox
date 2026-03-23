@@ -23,6 +23,9 @@ fun main() {
     ///   v--- expected a semicolon, found rbrace
     { 7 * }
 
+    ///   v--- expected a valid expression, found rbrace
+    ///   v--- expected a semicolon, found rbrace
+    var assignment_as_expression = x = 10;
 
 
     // function calls

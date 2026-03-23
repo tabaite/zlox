@@ -83,6 +83,11 @@ pub const Error = union(enum) {
         expected: Type,
     },
 
+    /// For if someone tries to use an assignment as an expression.
+    /// foo(x = 5);
+    /// ----^ assignment is not valid expression
+    assignmentIsNotValidExpression,
+
     // maybe we don't need the distinction but whatever
     // For when we find an incompatible type on an operation.
     incompatibleTypeUnary: struct {
@@ -153,6 +158,7 @@ pub const ErrorTrace = struct {
             .sourceRange => @constCast(""),
         };
         switch (self.err) {
+            .assignmentIsNotValidExpression => _ = try out.write("cannot use an assignment as an expression"),
             .illegalToken => |t| try out.print("illegal token: \"{s}\" is not recognized as a valid token", .{t.token}),
             .unterminatedString => _ = try out.write("unterminated string"),
             .expectedToken => |e| {

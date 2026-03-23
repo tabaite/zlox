@@ -381,7 +381,7 @@ fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
 
-    const blockRetInfo = returnRule(ctx, codegen);
+    const blockRetInfo = assignmentRule(ctx, codegen);
 
     const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
     if (semicolonMatchOrErr) |_| {
@@ -393,6 +393,32 @@ fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
         }
     }
     return blockRetInfo catch .{ .returnsOnAllPaths = true };
+}
+
+fn assignmentRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+    const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
+    defer tracyZone.End();
+
+    const prevPosition = ctx.tokenIterator.*;
+
+    const name = try peekOrInterrupt(ctx, .semicolon);
+    if (name.token.tokenType != .identifier) {
+        return try returnRule(ctx, codegen);
+    }
+
+    advance(ctx);
+
+    const eq = try peekOrInterrupt(ctx, .semicolon);
+    if (eq.token.tokenType != .equal) {
+        ctx.tokenIterator.* = prevPosition;
+        return try returnRule(ctx, codegen);
+    }
+
+    advance(ctx);
+
+    const val = try expressionRule(ctx, codegen, .semicolon);
+    _ = codegen.updateVariable(ctx, ctx.tokenIterator.exchangeTokenForSource(name.token), val);
+    return .{ .returnsOnAllPaths = false };
 }
 
 fn returnRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
@@ -657,13 +683,14 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
             return .ERR;
         }
     } else if (startParen.token.tokenType == .equal) {
-        const tracyZone = ztracy.ZoneN(@src(), "try parse assignment");
+        const tracyZone = ztracy.ZoneN(@src(), "try parse (invalid) assignment");
         defer tracyZone.End();
 
         advance(ctx);
 
-        const item = try expressionRule(ctx, codegen, interruptLevel);
-        return codegen.updateVariable(ctx, iter.exchangeTokenForSource(nameCtx.token), item);
+        _ = try expressionRule(ctx, codegen, interruptLevel);
+        ctx.log.push(.assignmentIsNotValidExpression, iter.peek(ctx.log));
+        return .ERR;
     } else {
         const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
         defer tracyZone.End();
