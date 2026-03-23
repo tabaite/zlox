@@ -689,6 +689,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         advance(ctx);
 
         _ = try expressionRule(ctx, codegen, interruptLevel);
+        _ = codegen.updateVariable(ctx, ctx.tokenIterator.exchangeTokenForSource(nameCtx.token), .ERR);
         ctx.log.push(.assignmentIsNotValidExpression, iter.peek(ctx.log));
         return .ERR;
     } else {
