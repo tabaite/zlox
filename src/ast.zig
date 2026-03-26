@@ -45,6 +45,12 @@ pub const Range = struct {
 pub const StmtHandle = u32;
 pub const ExprHandle = u32;
 
+pub const Function = struct {
+    name: []u8,
+    statements: Range,
+    argNames: Range,
+};
+
 pub const VariableAssignment = struct {
     name: []u8,
     val: ExprHandle,
@@ -62,7 +68,8 @@ pub const Expression = union(enum) {
     literal: union(enum) {
         number: f128,
         string: []u8,
-        boolean: bool,
+        true,
+        false,
         nil,
     },
     variable: []u8,
@@ -82,6 +89,8 @@ pub fn allocatorMust(T: type, result: Allocator.Error!T) T {
 
 pub const AST = struct {
     alloc: Allocator,
+    functionList: ArrayList(Function),
+    functionArgumentNamesList: ArrayList([]u8),
     statementList: ArrayList(Statement),
     expressionList: ArrayList(Expression),
     argumentList: ArrayList(ExprHandle),
@@ -89,6 +98,8 @@ pub const AST = struct {
     pub fn init(alloc: Allocator) AST {
         return .{
             .alloc = alloc,
+            .functionList = .initCapacity(alloc, 1024),
+            .functionArgumentNamesList = .initCapacity(alloc, 4096),
             .statementList = .initCapacity(alloc, 4096),
             .expressionList = .initCapacity(alloc, 8192),
             .argumentList = .initCapacity(alloc, 4096),
@@ -97,11 +108,27 @@ pub const AST = struct {
     pub fn deinit(ast: *AST) void {
         const alloc = ast.alloc;
 
+        alloc.free(ast.functionList);
+        alloc.free(ast.functionArgumentNamesList);
         alloc.free(ast.statementList);
         alloc.free(ast.expressionList);
         alloc.free(ast.argumentList);
     }
 
+    pub fn newFunction(ast: *AST, name: []u8, argNames: [][]u8, stmts: Range) void {
+        const argNameStart: u32 = @truncate(ast.functionArgumentNamesList.items.len);
+        const argNameEnd: u32 = argNameStart + @as(u32, @truncate(argNames.len));
+        allocatorMust(void, ast.functionArgumentNamesList.appendSlice(ast.alloc, argNames));
+
+        allocatorMust(void, ast.functionList.append(
+            ast.alloc,
+            .{
+                .name = name,
+                .statements = stmts,
+                .argNames = .{ .start = argNameStart, .end = argNameEnd },
+            },
+        ));
+    }
     pub fn newStatement(ast: *AST, stmt: Statement) StmtHandle {
         const idx: u32 = @truncate(ast.statementList.items.len);
         allocatorMust(void, ast.statementList.append(ast.alloc, stmt));
