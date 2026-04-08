@@ -9,8 +9,7 @@ const builtin = @import("builtin");
 const lib = @import("libzlox");
 const scanning = lib.scanning;
 const parsing = lib.parsing;
-const runtime = lib.runtime;
-const bytecode = lib.bytecode;
+const ast = lib.ast;
 const errors = lib.errors;
 const context = lib.context;
 const ErrorLog = errors.ErrorLog;
@@ -144,40 +143,22 @@ pub fn main() !void {
         return;
     }
 
-    // an expression can never be less than 1 token
-    var codegen = try bytecode.BytecodeGenerator.init(astAlloc);
+    var astgen = ast.AST.init(astAlloc);
+    defer astgen.deinit();
 
-    parsing.parseAndCompileAll(ctx, &codegen);
+    parsing.parseAndCompileAll(ctx, &astgen);
 
     if (try tryPrintErrors(ctx, stderr)) {
         return;
     }
     if (pipeline.printInstructions) {
-        const printInsZone = ztracy.ZoneN(@src(), "print instruction list");
-        defer printInsZone.End();
-
-        _ = try stderr.write("\nbytecode:\n");
-        for (codegen.bytecodeList.items) |ins| {
-            try bytecode.printInstruction(ins, stderr);
-        }
-        _ = try stderr.write("\n");
+        _ = try stderr.write("bytecode printing currently not supported due to ast refactoring\n");
     }
     if (pipeline.maxStage.asInt() < ProgramStage.evaluate.asInt()) {
         return;
     }
 
-    const programOrNull = codegen.finalize(ctx);
-    if (programOrNull) |program| {
-        var rt = try runtime.Runtime.init(astAlloc, gpa);
-        defer rt.deinit(astAlloc);
-        rt.run(program);
-
-        if (rt.variableStack.used > 2) {
-            try stderr.print("expected all items cleaned up, found {d} extra items\n", .{rt.variableStack.used});
-        }
-    }
-
-    _ = try tryPrintErrors(ctx, stderr);
+    _ = try stderr.write("program execution currently not supported due to ast refactoring\n");
 }
 
 fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !bool {

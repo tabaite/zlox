@@ -1,18 +1,22 @@
 const scanning = @import("scanning.zig");
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
+const ast = @import("ast.zig");
 const context = @import("context.zig");
 const ztracy = @import("ztracy");
 
-const MAX_ARGS = bytecode.MAX_ARGS;
+const NULL_HANDLE = ast.NULL_HANDLE;
+const MAX_ARGS = ast.MAX_ARGS;
+
 const Token = scanning.Token;
 const TokenContext = scanning.TokenContext;
-const CodeGen = bytecode.BytecodeGenerator;
+const AST = ast.AST;
 const Allocator = std.mem.Allocator;
 const AnyWriter = std.io.AnyWriter;
 const Context = context.Context;
 
-const Handle = bytecode.HandledOperand;
+const StmtRange = ast.Range;
+const ExprHandle = ast.ExprHandle;
 
 pub const VERYBADPRINTFUNCTIONNAME = "printtttt!!";
 
@@ -194,19 +198,16 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interrup
 // Each rule, described by the table above is a function.
 // The function mutates the state of the parser, moving the position forward
 // to the token immediately after the expression it returns.
-pub fn parseAndCompileAll(ctx: Context, codegen: *CodeGen) void {
+pub fn parseAndCompileAll(ctx: Context, astgen: *AST) void {
     const parseZone = ztracy.ZoneN(@src(), "parse + compile");
     defer parseZone.End();
 
     while (peekOrInterrupt(ctx, .eof)) |_| {
-        functionDeclarationRule(ctx, codegen);
+        functionDeclarationRule(ctx, astgen);
     } else |_| {}
-    // If there is no active function, this is a no-op.
-    // Otherwise (if the function has not ended by eof) this prevents a nasty bug.
-    codegen.exitFunction(ctx);
 }
 
-fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
+fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
 
@@ -214,19 +215,27 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     _ = filterCurrentTokenOrErr(.kwFun, ctx, .eof) catch {};
     advance(ctx);
 
-    const funNameTOrErr = filterCurrentTokenOrErr(.identifier, ctx, .eof);
+    const funNameTOrEof = filterCurrentTokenOrErr(.identifier, ctx, .eof);
     advance(ctx);
 
     _ = filterCurrentTokenOrErr(.leftParen, ctx, .eof) catch {};
     advance(ctx);
 
-    var args: [MAX_ARGS]bytecode.ArgInfo = undefined;
+    var args: [MAX_ARGS][]u8 = undefined;
     var argCount: usize = 0;
 
     // if EOF, main ( EOF,
     // skip parsing arguments
     // should be fine to implement this hack
-    const argStart = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .rightParen, .sourceEndExclusive = 0, .sourceStart = 0 } };
+    const argStart = peekOrInterrupt(ctx, .eof) catch TokenContext{
+        .newPos = 0,
+        .lineNumber = 0,
+        .token = .{
+            .tokenType = .rightParen,
+            .sourceEndExclusive = 0,
+            .sourceStart = 0,
+        },
+    };
     if (argStart.token.tokenType != .rightParen) while (peekOrInterrupt(ctx, .eof)) |_| {
         const argName = filterCurrentTokenOrErr(.identifier, ctx, .eof) catch break;
 
@@ -242,23 +251,8 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
                 .colon => {
                     advance(ctx);
                     const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
-                    if (argTypeOrInterrupt) |argType| {
-                        args[argCount] = .{
-                            .type = switch (argType.token.tokenType) {
-                                .tyBool => .bool,
-                                .tyNum => .number,
-                                .tyString => .string,
-                                .tyVoid => e: {
-                                    ctx.pushError(.argumentTypeCannotBeVoid);
-                                    break :e .nil;
-                                },
-                                else => e: {
-                                    ctx.pushError(.expectedTypeToken);
-                                    break :e .nil;
-                                },
-                            },
-                            .name = iter.exchangeTokenForSource(argName),
-                        };
+                    if (argTypeOrInterrupt) |_| {
+                        args[argCount] = iter.exchangeTokenForSource(argName);
                     } else |_| {
                         ctx.pushError(.expectedTypeToken);
                     }
@@ -304,84 +298,82 @@ fn functionDeclarationRule(ctx: Context, codegen: *CodeGen) void {
     advance(ctx);
 
     const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 } };
-    const retType: bytecode.Type = ret: switch (returnTypeTokenOrNull.token.tokenType) {
-        .tyBool => {
+    switch (returnTypeTokenOrNull.token.tokenType) {
+        .tyBool, .tyNum, .tyString, .tyVoid => {
             advance(ctx);
-            break :ret .bool;
-        },
-        .tyNum => {
-            advance(ctx);
-            break :ret .number;
-        },
-        .tyString => {
-            advance(ctx);
-            break :ret .string;
-        },
-        .tyVoid => {
-            advance(ctx);
-            break :ret .nil;
         },
         // Start of function body. We assume this means void.
         //         v
-        .leftBrace => break :ret .nil,
+        .leftBrace => {},
         else => {
             advance(ctx);
             ctx.pushError(.expectedTypeToken);
-            break :ret .nil;
         },
-    };
-    if (funNameTOrErr) |funNameT| {
-        const funName = iter.exchangeTokenForSource(funNameT);
-        codegen.enterFunction(ctx, funName, args[0..argCount], retType);
-    } else |_| {}
+    }
+
+    const argNames = args[0..argCount];
     // Function body
-    _ = blockRule(ctx, codegen);
-    // works even if we don't enter the function
-    codegen.exitFunction(ctx);
+    const stmts = blockRule(ctx, astgen);
+
+    if (funNameTOrEof) |funNameT| {
+        astgen.newFunction(ctx.tokenIterator.exchangeTokenForSource(funNameT), argNames, stmts);
+    } else |_| {}
 }
 
-fn blockRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
+fn blockRule(ctx: Context, astgen: *AST) StmtRange {
     const tracyZone = ztracy.ZoneN(@src(), "parse block");
     defer tracyZone.End();
 
-    const defaultRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = true };
-    _ = filterCurrentTokenOrErr(.leftBrace, ctx, .eof) catch return defaultRetInfo;
+    const defaultRange: StmtRange = .EMPTY;
+    _ = filterCurrentTokenOrErr(.leftBrace, ctx, .eof) catch return defaultRange;
     advance(ctx);
 
-    codegen.enterScope();
-    const retInfo = blockBodyRule(ctx, codegen);
-    codegen.exitScope();
+    const retInfo = blockBodyRule(ctx, astgen);
 
     _ = filterCurrentTokenOrErr(.rightBrace, ctx, .eof) catch return retInfo;
     advance(ctx);
     return retInfo;
 }
 
-fn blockBodyRule(ctx: Context, codegen: *CodeGen) BlockReturnInfo {
+fn blockBodyRule(ctx: Context, astgen: *AST) StmtRange {
     const tracyZone = ztracy.ZoneN(@src(), "parse block body");
     defer tracyZone.End();
 
-    var blockRetInfo: BlockReturnInfo = .{ .returnsOnAllPaths = false };
+    const stmtStart: u32 = @truncate(astgen.statementList.items.len);
+
     while (peekOrInterrupt(ctx, .brace)) |t| {
         const tk = t.token;
-        const subblockRetInfo: BlockReturnInfo = switch (tk.tokenType) {
-            .leftBrace => blockRule(ctx, codegen),
-            // might not be reachable..?
-            .rightBrace => return blockRetInfo,
-            else => statementRule(ctx, codegen) catch break,
-        };
-        blockRetInfo.returnsOnAllPaths = blockRetInfo.returnsOnAllPaths or subblockRetInfo.returnsOnAllPaths;
+        switch (tk.tokenType) {
+            .leftBrace => _ = blockRule(ctx, astgen),
+            else => statementRule(ctx, astgen) catch {
+                // interrupted by brace and returned early
+                // do NOT advance otherwise the brace will be skipped
+                //
+                // advancing on eof will still result in eof so it's fine
+                break;
+            },
+        }
     } else |_| {}
     // when we are interrupted by either EOF or right brace
+    const stmtEnd: u32 = @truncate(astgen.statementList.items.len);
     _ = filterCurrentTokenOrErr(.rightBrace, ctx, .eof) catch {};
-    return blockRetInfo;
+    return .{ .start = stmtStart, .end = stmtEnd };
 }
 
-fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+/// Returns an interrupt on a brace/EOF.
+fn statementRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
 
-    const blockRetInfo = assignmentRule(ctx, codegen);
+    assignmentRule(ctx, astgen) catch {
+        // assignmentRule can be interrupted by semicolon
+        _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
+            switch (err) {
+                ParseInterruptSignal.ReachedEndOfStatement => return err,
+                TokenFilterError.DoesNotMatch => return,
+            };
+        advance(ctx);
+    };
 
     const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
     if (semicolonMatchOrErr) |_| {
@@ -389,13 +381,12 @@ fn statementRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
     } else |err| {
         switch (err) {
             ParseInterruptSignal.ReachedEndOfStatement => return err,
-            TokenFilterError.DoesNotMatch => return blockRetInfo catch .{ .returnsOnAllPaths = true },
+            TokenFilterError.DoesNotMatch => return,
         }
     }
-    return blockRetInfo catch .{ .returnsOnAllPaths = true };
 }
 
-fn assignmentRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+fn assignmentRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
     defer tracyZone.End();
 
@@ -403,7 +394,7 @@ fn assignmentRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
 
     const name = try peekOrInterrupt(ctx, .semicolon);
     if (name.token.tokenType != .identifier) {
-        return try returnRule(ctx, codegen);
+        return try returnRule(ctx, astgen);
     }
 
     advance(ctx);
@@ -411,40 +402,43 @@ fn assignmentRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
     const eq = try peekOrInterrupt(ctx, .semicolon);
     if (eq.token.tokenType != .equal) {
         ctx.tokenIterator.* = prevPosition;
-        return try returnRule(ctx, codegen);
+        return try returnRule(ctx, astgen);
     }
 
     advance(ctx);
 
-    const val = try expressionRule(ctx, codegen, .semicolon);
-    _ = codegen.updateVariable(ctx, ctx.tokenIterator.exchangeTokenForSource(name.token), val);
-    return .{ .returnsOnAllPaths = false };
+    const val = try expressionRule(ctx, astgen, .semicolon);
+    _ = astgen.newStatement(.{
+        .assignment = .{
+            .name = ctx.tokenIterator.exchangeTokenForSource(name.token),
+            .val = val,
+        },
+    });
 }
 
-fn returnRule(ctx: Context, codegen: *CodeGen) !BlockReturnInfo {
+fn returnRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "try parse return or fallthrough");
     defer tracyZone.End();
 
     const ret = try peekOrInterrupt(ctx, .semicolon);
     if (ret.token.tokenType != .kwReturn) {
-        try declarationRule(ctx, codegen);
-        return .{ .returnsOnAllPaths = false };
+        try declarationRule(ctx, astgen);
+        return;
     }
     advance(ctx);
     if (peekOrInterrupt(ctx, .semicolon)) |_| {
-        codegen.insertFunctionReturn(ctx, try expressionRule(ctx, codegen, .semicolon));
+        _ = astgen.newStatement(.{ .funReturn = try expressionRule(ctx, astgen, .semicolon) });
     } else |_| {}
-    return .{ .returnsOnAllPaths = true };
 }
 
-fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
+fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
     const tracyZone = ztracy.ZoneN(@src(), "try parse declaration or fallthrough");
     defer tracyZone.End();
 
     const iter = ctx.tokenIterator;
     const decl = try peekOrInterrupt(ctx, .semicolon);
     if (decl.token.tokenType != .kwVar) {
-        _ = try expressionRule(ctx, codegen, .semicolon);
+        _ = try expressionRule(ctx, astgen, .semicolon);
         return;
     }
     advance(ctx);
@@ -469,7 +463,7 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
                 ctx.pushError(.expectedTypeToken);
                 return e;
             };
-            const varType: bytecode.Type = switch (typeToken.token.tokenType) {
+            _ = switch (typeToken.token.tokenType) {
                 .tyBool => .bool,
                 .tyNum => .number,
                 .tyString => .string,
@@ -484,118 +478,125 @@ fn declarationRule(ctx: Context, codegen: *CodeGen) ParseInterruptSignal!void {
 
             const nextCtx = try peekOrInterrupt(ctx, .semicolon);
             const next = nextCtx.token;
-            const initialValue: ?Handle = val: {
+            const initialValue: ExprHandle = val: {
                 switch (next.tokenType) {
                     .equal => {
                         advance(ctx);
-                        break :val try expressionRule(ctx, codegen, .semicolon);
+                        break :val try expressionRule(ctx, astgen, .semicolon);
                     },
                     .semicolon => {
-                        break :val null;
+                        break :val astgen.newExpression(.{ .literal = .nil });
                     },
                     else => {
                         ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
-                        break :val null;
+                        break :val astgen.newExpression(.{ .literal = .nil });
                     },
                 }
             };
 
-            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken.token), .{ .provided = .{ .type = varType, .initial = initialValue } });
-            return;
+            _ = astgen.newStatement(.{
+                .declaration = .{
+                    .name = iter.exchangeTokenForSource(nameToken.token),
+                    .val = initialValue,
+                },
+            });
         },
         .equal => {
             advance(ctx);
-            _ = codegen.registerVariable(ctx, iter.exchangeTokenForSource(nameToken.token), .{ .fromValue = try expressionRule(ctx, codegen, .semicolon) });
-            return;
+            _ = astgen.newStatement(.{
+                .declaration = .{
+                    .name = iter.exchangeTokenForSource(nameToken.token),
+                    .val = try expressionRule(ctx, astgen, .semicolon),
+                },
+            });
         },
         // Includes semicolon.
         else => {
             ctx.pushError(.expectedTypeAnnotation);
-            return;
         },
     }
 }
 
-fn expressionRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
+fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse expression");
     defer tracyZone.End();
 
     _ = peekOrInterrupt(ctx, interruptLevel) catch {
         ctx.pushError(.expectedExpression);
-        return .ERR;
+        return NULL_HANDLE;
     };
-    return try orRule(ctx, codegen, interruptLevel);
+    return try orRule(ctx, astgen, interruptLevel);
 }
 
 // might be the most atrocious function body i've ever written
-inline fn binaryRule(ctx: Context, codegen: *CodeGen, comptime ruleName: [:0]const u8, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *CodeGen, InterruptLevel) ParseInterruptSignal!Handle, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
+inline fn binaryRule(ctx: Context, astgen: *AST, comptime ruleName: [:0]const u8, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *AST, InterruptLevel) ParseInterruptSignal!ExprHandle, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse binary " ++ ruleName);
     defer tracyZone.End();
 
-    var expression = try previousRule(ctx, codegen, interruptLevel);
+    var expression = try previousRule(ctx, astgen, interruptLevel);
     while (peekOrInterrupt(ctx, interruptLevel)) |tok| {
-        const operation = matchTokenToExprOrNull(tok.token.tokenType, matches) orelse break;
+        _ = matchTokenToExprOrNull(tok.token.tokenType, matches) orelse break;
 
         advance(ctx);
 
-        const right = try previousRule(ctx, codegen, interruptLevel);
+        const right = try previousRule(ctx, astgen, interruptLevel);
 
-        expression = codegen.pushBinaryOperation(ctx, operation, expression, right);
+        expression = astgen.newExpression(.{ .binary = .{ .lhs = expression, .rhs = right } });
     } else |_| {}
     return expression;
 }
-fn orRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn orRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwOr, .value = .bOr }};
-    return binaryRule(ctx, codegen, "or", matches, andRule, interruptLevel);
+    return binaryRule(ctx, astgen, "or", matches, andRule, interruptLevel);
 }
-fn andRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn andRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{.{ .key = .kwAnd, .value = .bAnd }};
-    return binaryRule(ctx, codegen, "and", matches, equalityRule, interruptLevel);
+    return binaryRule(ctx, astgen, "and", matches, equalityRule, interruptLevel);
 }
-fn equalityRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn equalityRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .bangEqual, .value = .notEquality }, .{ .key = .equalEqual, .value = .equality } };
-    return binaryRule(ctx, codegen, "equality", matches, comparisonRule, interruptLevel);
+    return binaryRule(ctx, astgen, "equality", matches, comparisonRule, interruptLevel);
 }
-fn comparisonRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn comparisonRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .greater, .value = .greater }, .{ .key = .greaterEqual, .value = .greaterEqual }, .{ .key = .less, .value = .less }, .{ .key = .lessEqual, .value = .lessEqual } };
-    return binaryRule(ctx, codegen, "comparison", matches, termRule, interruptLevel);
+    return binaryRule(ctx, astgen, "comparison", matches, termRule, interruptLevel);
 }
-fn termRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn termRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .plus, .value = .add }, .{ .key = .minus, .value = .subtract } };
-    return binaryRule(ctx, codegen, "term", matches, factorRule, interruptLevel);
+    return binaryRule(ctx, astgen, "term", matches, factorRule, interruptLevel);
 }
-fn factorRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) !Handle {
+fn factorRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const matches = &[_]TokenToBinaryExpr{ .{ .key = .star, .value = .multiply }, .{ .key = .slash, .value = .divide }, .{ .key = .percent, .value = .modulo } };
-    return binaryRule(ctx, codegen, "factor", matches, unaryRule, interruptLevel);
+    return binaryRule(ctx, astgen, "factor", matches, unaryRule, interruptLevel);
 }
-fn unaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
+fn unaryRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse unary");
     defer tracyZone.End();
 
-    const opToken = peekOrInterrupt(ctx, interruptLevel) catch return functionCallOrVariableOrAssignmentRule(ctx, codegen, interruptLevel);
+    const opToken = peekOrInterrupt(ctx, interruptLevel) catch return functionCallOrVariableRule(ctx, astgen, interruptLevel);
 
-    const operation: UnaryExprType = switch (opToken.token.tokenType) {
+    _ = switch (opToken.token.tokenType) {
         .bang => .negateBool,
         .minus => .negate,
-        else => return functionCallOrVariableOrAssignmentRule(ctx, codegen, interruptLevel),
+        else => return functionCallOrVariableRule(ctx, astgen, interruptLevel),
     };
 
     advance(ctx);
 
-    const right = try unaryRule(ctx, codegen, interruptLevel);
+    const right = try unaryRule(ctx, astgen, interruptLevel);
 
-    return codegen.pushUnaryOperation(ctx, operation, right);
+    return astgen.newExpression(.{ .unary = .{ .rhs = right } });
 }
 
 // Calls and variable usages both start with an identifier, so they're combined into one rule.
-fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
+fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const iter = ctx.tokenIterator;
 
-    const nameCtx = peekOrInterrupt(ctx, interruptLevel) catch return primaryRule(ctx, codegen, interruptLevel);
+    const nameCtx = peekOrInterrupt(ctx, interruptLevel) catch return primaryRule(ctx, astgen, interruptLevel);
     const nameToken = nameCtx.token;
 
     if (nameToken.tokenType != .identifier and nameToken.tokenType != .kwPrint) {
-        return primaryRule(ctx, codegen, interruptLevel);
+        return primaryRule(ctx, astgen, interruptLevel);
     }
     advance(ctx);
     const startParen = peekOrInterrupt(ctx, interruptLevel) catch {
@@ -603,7 +604,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
         defer tracyZone.End();
 
-        return codegen.getVariable(ctx, iter.exchangeTokenForSource(nameCtx.token));
+        return astgen.newExpression(.{ .variable = iter.exchangeTokenForSource(nameCtx.token) });
     };
 
     if (startParen.token.tokenType == .leftParen) {
@@ -621,7 +622,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         // foo(a b)
         // ------^ expected comma, found expression
         advance(ctx);
-        var args: [MAX_ARGS]Handle = undefined;
+        var args: [MAX_ARGS]ExprHandle = undefined;
         var argNums: usize = 0;
 
         // crazy nesting lol
@@ -640,7 +641,7 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
                     break;
                 }
 
-                const argExpr = try expressionRule(ctx, codegen, interruptLevel);
+                const argExpr = try expressionRule(ctx, astgen, interruptLevel);
                 if (argNums < MAX_ARGS) {
                     args[argNums] = argExpr;
                 } else {
@@ -649,8 +650,8 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
                 argNums += 1;
 
                 const continuation = peekOrInterrupt(ctx, interruptLevel) catch {
-                    _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch return .ERR;
-                    return codegen.callFunction(ctx, iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
+                    _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch return NULL_HANDLE;
+                    return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
                 };
                 switch (continuation.token.tokenType) {
                     .comma => {
@@ -673,14 +674,14 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
         if (end) |t| {
             advance(ctx);
             if (t.token.tokenType == .rightParen) {
-                return codegen.callFunction(ctx, iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
+                return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
             } else {
                 _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch {};
-                return .ERR;
+                return NULL_HANDLE;
             }
         } else |_| {
             _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch {};
-            return .ERR;
+            return NULL_HANDLE;
         }
     } else if (startParen.token.tokenType == .equal) {
         const tracyZone = ztracy.ZoneN(@src(), "try parse (invalid) assignment");
@@ -688,19 +689,18 @@ fn functionCallOrVariableOrAssignmentRule(ctx: Context, codegen: *CodeGen, inter
 
         advance(ctx);
 
-        _ = try expressionRule(ctx, codegen, interruptLevel);
-        _ = codegen.updateVariable(ctx, ctx.tokenIterator.exchangeTokenForSource(nameCtx.token), .ERR);
+        _ = try expressionRule(ctx, astgen, interruptLevel);
         ctx.log.push(.assignmentIsNotValidExpression, iter.peek(ctx.log));
-        return .ERR;
+        return NULL_HANDLE;
     } else {
         const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
         defer tracyZone.End();
 
-        return codegen.getVariable(ctx, iter.exchangeTokenForSource(nameCtx.token));
+        return astgen.newExpression(.{ .variable = iter.exchangeTokenForSource(nameCtx.token) });
     }
 }
 
-fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) ParseInterruptSignal!Handle {
+fn primaryRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse primary");
     defer tracyZone.End();
 
@@ -713,7 +713,7 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
     const result = switch (tok.token.tokenType) {
         .leftParen => grouping: {
             advance(ctx);
-            const expr = try expressionRule(ctx, codegen, .parenthesis);
+            const expr = try expressionRule(ctx, astgen, .parenthesis);
 
             // current will be the token following expr
             // the only other interrupt level above semicolon is right paren, which we don't want to interfere with our stuff
@@ -723,21 +723,21 @@ fn primaryRule(ctx: Context, codegen: *CodeGen, interruptLevel: InterruptLevel) 
             };
             if (endParen.token.tokenType != .rightParen) {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
-                return .ERR;
+                return NULL_HANDLE;
             }
             break :grouping expr;
         },
-        .number => CodeGen.newNumberLit(std.fmt.parseFloat(f64, iter.exchangeTokenForSource(tok.token)) catch 0),
-        .string => codegen.newStringLit(iter.exchangeTokenForSource(tok.token)),
-        .kwNil => CodeGen.newNilLit(),
-        .kwTrue => comptime CodeGen.newBoolLit(true),
-        .kwFalse => comptime CodeGen.newBoolLit(false),
+        .number => astgen.newExpression(.{ .literal = .{ .number = std.fmt.parseFloat(f128, iter.exchangeTokenForSource(tok.token)) catch 0 } }),
+        .string => astgen.newExpression(.{ .literal = .{ .string = iter.exchangeTokenForSource(tok.token) } }),
+        .kwNil => astgen.newExpression(.{ .literal = .nil }),
+        .kwTrue => astgen.newExpression(.{ .literal = .true }),
+        .kwFalse => astgen.newExpression(.{ .literal = .false }),
         else => {
             // Since this is the last rule checked, a rejection means there's no expression.
             // If we're calling the expression rules, we definitely need one.
             ctx.pushError(.expectedExpression);
             advance(ctx);
-            return .ERR;
+            return NULL_HANDLE;
         },
     };
     advance(ctx);

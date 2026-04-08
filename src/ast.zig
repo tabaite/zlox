@@ -40,8 +40,11 @@ pub const MAX_ARGS = 256;
 pub const Range = struct {
     start: u32,
     end: u32,
+
+    pub const EMPTY: @This() = .{ .start = 0, .end = 0 };
 };
 
+pub const NULL_HANDLE = 0;
 pub const StmtHandle = u32;
 pub const ExprHandle = u32;
 
@@ -60,6 +63,7 @@ pub const Statement = union(enum) {
     declaration: VariableAssignment,
     assignment: VariableAssignment,
     expression: ExprHandle,
+    funReturn: ExprHandle,
 };
 
 pub const Expression = union(enum) {
@@ -98,21 +102,21 @@ pub const AST = struct {
     pub fn init(alloc: Allocator) AST {
         return .{
             .alloc = alloc,
-            .functionList = .initCapacity(alloc, 1024),
-            .functionArgumentNamesList = .initCapacity(alloc, 4096),
-            .statementList = .initCapacity(alloc, 4096),
-            .expressionList = .initCapacity(alloc, 8192),
-            .argumentList = .initCapacity(alloc, 4096),
+            .functionList = allocatorMust(ArrayList(Function), ArrayList(Function).initCapacity(alloc, 1024)),
+            .functionArgumentNamesList = allocatorMust(ArrayList([]u8), ArrayList([]u8).initCapacity(alloc, 4096)),
+            .statementList = allocatorMust(ArrayList(Statement), ArrayList(Statement).initCapacity(alloc, 4096)),
+            .expressionList = allocatorMust(ArrayList(Expression), ArrayList(Expression).initCapacity(alloc, 8192)),
+            .argumentList = allocatorMust(ArrayList(ExprHandle), ArrayList(ExprHandle).initCapacity(alloc, 4096)),
         };
     }
     pub fn deinit(ast: *AST) void {
         const alloc = ast.alloc;
 
-        alloc.free(ast.functionList);
-        alloc.free(ast.functionArgumentNamesList);
-        alloc.free(ast.statementList);
-        alloc.free(ast.expressionList);
-        alloc.free(ast.argumentList);
+        ast.functionList.deinit(alloc);
+        ast.functionArgumentNamesList.deinit(alloc);
+        ast.statementList.deinit(alloc);
+        ast.expressionList.deinit(alloc);
+        ast.argumentList.deinit(alloc);
     }
 
     pub fn newFunction(ast: *AST, name: []u8, argNames: [][]u8, stmts: Range) void {
@@ -150,7 +154,7 @@ pub const AST = struct {
     }
     /// Pretty please do not use with a function call expression.
     pub fn newExpression(ast: *AST, expr: Expression) ExprHandle {
-        const idx: u32 = @truncate(ast.expression.items.len);
+        const idx: u32 = @truncate(ast.expressionList.items.len);
         allocatorMust(void, ast.expressionList.append(ast.alloc, expr));
         return idx;
     }

@@ -12,4 +12,7 @@ fun isSixOne(a: number) bool {
 
 fun main() {
     var e = isSixOne(add(27, 57));
+
+    // weird invalid parse
+    { 7 * }
 }
