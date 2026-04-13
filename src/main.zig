@@ -152,7 +152,7 @@ pub fn main() !void {
         return;
     }
     if (pipeline.printInstructions) {
-        _ = try stderr.write("bytecode printing currently not supported due to ast refactoring\n");
+        _ = try ast.printAST(&astgen, stderr);
     }
     if (pipeline.maxStage.asInt() < ProgramStage.evaluate.asInt()) {
         return;

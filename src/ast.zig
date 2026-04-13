@@ -32,6 +32,7 @@
 // we are planning to depreciate type annotations to stick to the original lox spec
 
 const std = @import("std");
+const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
@@ -159,3 +160,18 @@ pub const AST = struct {
         return idx;
     }
 };
+
+pub fn printAST(ast: *AST, out: *Writer) !void {
+    _ = try out.write("bytecode printing currently not supported due to ast refactoring\n");
+    const fns = ast.functionList.items;
+
+    for (fns) |f| {
+        try out.print("function \"{s}\" ( ", .{f.name});
+
+        const fargs = ast.functionArgumentNamesList.items[f.argNames.start..f.argNames.end];
+        for (fargs) |argname| {
+            try out.print("\"{s}\" ", .{argname});
+        }
+        _ = try out.write(")\n");
+    }
+}
