@@ -80,7 +80,7 @@ pub const Expression = union(enum) {
     variable: []u8,
     functionCall: struct {
         name: []u8,
-        argRange: Range,
+        argExprRange: Range,
     },
 };
 
@@ -148,7 +148,7 @@ pub const AST = struct {
         const call: Expression = .{
             .functionCall = .{
                 .name = name,
-                .argRange = .{ .start = argStart, .end = argEnd },
+                .argExprRange = .{ .start = argStart, .end = argEnd },
             },
         };
         return ast.newExpression(call);
@@ -173,5 +173,68 @@ pub fn printAST(ast: *AST, out: *Writer) !void {
             try out.print("\"{s}\" ", .{argname});
         }
         _ = try out.write(")\n");
+
+        const stmts = ast.statementList.items[f.statements.start..f.statements.end];
+        for (stmts) |stmt| {
+            _ = try out.write("\t");
+            switch (stmt) {
+                .assignment => |a| {
+                    try out.print("{{ {s} = ", .{a.name});
+                    try printASTExpr(ast, a.val, out);
+                },
+                .declaration => |d| {
+                    try out.print("{{ decl {s} = ", .{d.name});
+                    try printASTExpr(ast, d.val, out);
+                },
+                .expression => |e| {
+                    _ = try out.write("{ ");
+                    try printASTExpr(ast, e, out);
+                },
+                .funReturn => |r| {
+                    _ = try out.write("{ return ");
+                    try printASTExpr(ast, r, out);
+                },
+            }
+            _ = try out.write(" }\n");
+        }
+    }
+}
+
+pub fn printASTExpr(ast: *AST, exprIdx: u32, out: *Writer) !void {
+    const expr = ast.expressionList.items[exprIdx];
+
+    switch (expr) {
+        .binary => |b| {
+            _ = try out.write("( binary ");
+            try printASTExpr(ast, b.lhs, out);
+            _ = try out.write(" ");
+            try printASTExpr(ast, b.rhs, out);
+            _ = try out.write(" )");
+        },
+        .unary => |u| {
+            _ = try out.write("( unary ");
+            try printASTExpr(ast, u.rhs, out);
+            _ = try out.write(" )");
+        },
+        .functionCall => |f| {
+            try out.print("( fn \"{s}\"", .{f.name});
+            for (f.argExprRange.start..f.argExprRange.end) |e| {
+                try printASTExpr(ast, @intCast(e), out);
+                _ = try out.write(", ");
+            }
+            _ = try out.write(")");
+        },
+        .variable => |v| try out.print("( {s} )", .{v}),
+        .literal => |l| {
+            _ = try out.write("( ");
+            switch (l) {
+                .number => |n| try out.print("{d}", .{n}),
+                .string => |s| try out.print("\"{s}\"", .{s}),
+                .true => _ = try out.write("TRUE"),
+                .false => _ = try out.write("FALSE"),
+                .nil => _ = try out.write("NIL"),
+            }
+            _ = try out.write(" )");
+        },
     }
 }
