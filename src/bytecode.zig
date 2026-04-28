@@ -1,3 +1,7 @@
+// This is the *old* code generation backend that was called
+// directly from the parser and generated quite poor quality bytecode
+// (albeit without the added step of an AST).
+
 const prelude = @import("prelude.zig");
 const std = prelude.std;
 // circular imports are allowed!!!
