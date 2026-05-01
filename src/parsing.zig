@@ -320,6 +320,18 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
     } else |_| {}
 }
 
+const prelude = @import("prelude.zig");
+const Stack = prelude.Stack;
+fn iterBlockRule(ctx: Context, astgen: *AST) void {
+    const BlockAnalysis = struct {
+        iterator: scanning.TokenIterator,
+        astBlockId: u32,
+    };
+    const blockStack = Stack(BlockAnalysis, 2048);
+
+    while (blockStack.pop()) |analysis| {}
+}
+
 fn blockRule(ctx: Context, astgen: *AST) StmtRange {
     const tracyZone = ztracy.ZoneN(@src(), "parse block");
     defer tracyZone.End();
