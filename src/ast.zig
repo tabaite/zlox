@@ -6,8 +6,7 @@
 // [ ... foo ... ]
 // v-----
 // foo:
-// - start: start of statement slice (number)
-// - end: end of statement slice (number)
+// - block: function body block id (number)
 //
 // statement list:
 // [ ... (start) -- (n) -- (end) ... ]
@@ -15,6 +14,9 @@
 // n:
 // - expr: the expression
 // - phi start/end: indicators for phi nodes
+//
+// we don't actually have any "block" structure because each block scope is a subset of
+// each parent block, so it doesn't really make sense
 //
 // expression list (actual tree part):
 // [ ... (expr) -- (expr.inner) ... ]
