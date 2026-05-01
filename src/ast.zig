@@ -14,6 +14,7 @@
 // v-----------------
 // n:
 // - expr: the expression
+// - phi start/end: indicators for phi nodes
 //
 // expression list (actual tree part):
 // [ ... (expr) -- (expr.inner) ... ]
