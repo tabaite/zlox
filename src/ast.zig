@@ -68,6 +68,9 @@ pub const Statement = union(enum) {
     assignment: VariableAssignment,
     expression: ExprHandle,
     funReturn: ExprHandle,
+    scopeStart,
+    phiScopeStart: union(enum) {},
+    scopeEnd,
 };
 
 pub const Expression = union(enum) {
@@ -197,6 +200,7 @@ pub fn printAST(ast: *AST, out: *Writer) !void {
                     _ = try out.write("{ return ");
                     try printASTExpr(ast, r, out);
                 },
+                .phiScopeStart, .scopeEnd, .scopeStart => {},
             }
             _ = try out.write(" }\n");
         }
