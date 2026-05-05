@@ -3,10 +3,11 @@
 program        → ( function )\* EOF
 function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")\* (IDENTIFIER ":" type) )? ")" ( type )? block
 arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
-block          → "{" ( statement )\* "}"
-statement      → ( return | declaration | expression | assignment ) ";"
+block          → "{" ( line )\* "}"
+line           → ( return | expression | assignment | declaration ) ";"
+statement      → ( return | expression | assignment ) ";"
+declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
 return         → "return" expression
-declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
 assignment     → IDENTIFIER "=" expression
 expression     → or
 or             → and ( "or" and )\*

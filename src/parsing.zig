@@ -365,6 +365,32 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
 
+    declarationRule(ctx, astgen) catch {
+        // assignmentRule can be interrupted by semicolon
+        _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
+            switch (err) {
+                ParseInterruptSignal.ReachedEndOfStatement => return err,
+                TokenFilterError.DoesNotMatch => return,
+            };
+        advance(ctx);
+    };
+
+    const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
+    if (semicolonMatchOrErr) |_| {
+        advance(ctx);
+    } else |err| {
+        switch (err) {
+            ParseInterruptSignal.ReachedEndOfStatement => return err,
+            TokenFilterError.DoesNotMatch => return,
+        }
+    }
+}
+
+/// Returns an interrupt on a brace/EOF.
+fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
+    const tracyZone = ztracy.ZoneN(@src(), "parse statement");
+    defer tracyZone.End();
+
     assignmentRule(ctx, astgen) catch {
         // assignmentRule can be interrupted by semicolon
         _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
@@ -386,51 +412,6 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
     }
 }
 
-fn assignmentRule(ctx: Context, astgen: *AST) !void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
-    defer tracyZone.End();
-
-    const prevPosition = ctx.tokenIterator.*;
-
-    const name = try peekOrInterrupt(ctx, .semicolon);
-    if (name.token.tokenType != .identifier) {
-        return try returnRule(ctx, astgen);
-    }
-
-    advance(ctx);
-
-    const eq = try peekOrInterrupt(ctx, .semicolon);
-    if (eq.token.tokenType != .equal) {
-        ctx.tokenIterator.* = prevPosition;
-        return try returnRule(ctx, astgen);
-    }
-
-    advance(ctx);
-
-    const val = try expressionRule(ctx, astgen, .semicolon);
-    _ = astgen.newStatement(.{
-        .assignment = .{
-            .name = ctx.tokenIterator.exchangeTokenForSource(name.token),
-            .val = val,
-        },
-    });
-}
-
-fn returnRule(ctx: Context, astgen: *AST) !void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse return or fallthrough");
-    defer tracyZone.End();
-
-    const ret = try peekOrInterrupt(ctx, .semicolon);
-    if (ret.token.tokenType != .kwReturn) {
-        try declarationRule(ctx, astgen);
-        return;
-    }
-    advance(ctx);
-    if (peekOrInterrupt(ctx, .semicolon)) |_| {
-        _ = astgen.newStatement(.{ .funReturn = try expressionRule(ctx, astgen, .semicolon) });
-    } else |_| {}
-}
-
 fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
     const tracyZone = ztracy.ZoneN(@src(), "try parse declaration or fallthrough");
     defer tracyZone.End();
@@ -438,7 +419,7 @@ fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
     const iter = ctx.tokenIterator;
     const decl = try peekOrInterrupt(ctx, .semicolon);
     if (decl.token.tokenType != .kwVar) {
-        _ = try expressionRule(ctx, astgen, .semicolon);
+        _ = try assignmentRule(ctx, astgen);
         return;
     }
     advance(ctx);
@@ -515,6 +496,51 @@ fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
             ctx.pushError(.expectedTypeAnnotation);
         },
     }
+}
+
+fn assignmentRule(ctx: Context, astgen: *AST) !void {
+    const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
+    defer tracyZone.End();
+
+    const prevPosition = ctx.tokenIterator.*;
+
+    const name = try peekOrInterrupt(ctx, .semicolon);
+    if (name.token.tokenType != .identifier) {
+        return try returnRule(ctx, astgen);
+    }
+
+    advance(ctx);
+
+    const eq = try peekOrInterrupt(ctx, .semicolon);
+    if (eq.token.tokenType != .equal) {
+        ctx.tokenIterator.* = prevPosition;
+        return try returnRule(ctx, astgen);
+    }
+
+    advance(ctx);
+
+    const val = try expressionRule(ctx, astgen, .semicolon);
+    _ = astgen.newStatement(.{
+        .assignment = .{
+            .name = ctx.tokenIterator.exchangeTokenForSource(name.token),
+            .val = val,
+        },
+    });
+}
+
+fn returnRule(ctx: Context, astgen: *AST) !void {
+    const tracyZone = ztracy.ZoneN(@src(), "try parse return or fallthrough");
+    defer tracyZone.End();
+
+    const ret = try peekOrInterrupt(ctx, .semicolon);
+    if (ret.token.tokenType != .kwReturn) {
+        try declarationRule(ctx, astgen);
+        return;
+    }
+    advance(ctx);
+    if (peekOrInterrupt(ctx, .semicolon)) |_| {
+        _ = astgen.newStatement(.{ .funReturn = try expressionRule(ctx, astgen, .semicolon) });
+    } else |_| {}
 }
 
 fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
