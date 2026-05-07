@@ -85,8 +85,47 @@ const ParseInterruptSignal = error{
     /// Any semicolon encountered within the parse MUST be interpreted as an immediate end to
     /// the statement.
     /// This signal can also be used for the end of a file.
-    ReachedEndOfStatement,
+    ReachedParen,
+    ReachedSemicolon,
+    ReachedBrace,
+    ReachedEOF,
 };
+
+fn isInterruptAtOrAbove(sig: ParseInterruptSignal, target: ParseInterruptSignal) bool {
+    const IntError = std.meta.Int(.unsigned, @bitSizeOf(anyerror));
+    const PIS = ParseInterruptSignal;
+
+    // kinda hacky haha
+    const largerThanSet: @Vector(4, IntError) = switch (sig) {
+        PIS.ReachedParen => .{
+            @intFromError(PIS.ReachedParen),
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedSemicolon => .{
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedBrace => .{
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedEOF => .{
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+        },
+    };
+    const mask: @Vector(4, IntError) = @splat(@intFromError(sig));
+    const matches: @Vector(4, bool) = mask == largerThanSet;
+    return @reduce(.Or, matches);
+}
 
 /// Interrupt levels define the scope of interrupts.
 /// Each level is a superset of the previous, so
@@ -163,7 +202,7 @@ inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSig
 
     const mask: MatchVec = @splat(@intFromEnum(token.tokenType));
     const interruptResult = interruptMatches[level.asInt()] == mask;
-    return if (@reduce(.Or, interruptResult)) ParseInterruptSignal.ReachedEndOfStatement else tokenContext;
+    return if (@reduce(.Or, interruptResult)) ParseInterruptSignal.ReachedSemicolon else tokenContext;
 }
 
 inline fn advance(ctx: Context) void {
@@ -369,7 +408,7 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
         // assignmentRule can be interrupted by semicolon
         _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
             switch (err) {
-                ParseInterruptSignal.ReachedEndOfStatement => return err,
+                ParseInterruptSignal.ReachedSemicolon => return err,
                 TokenFilterError.DoesNotMatch => return,
             };
         advance(ctx);
@@ -380,7 +419,7 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
         advance(ctx);
     } else |err| {
         switch (err) {
-            ParseInterruptSignal.ReachedEndOfStatement => return err,
+            ParseInterruptSignal.ReachedSemicolon => return err,
             TokenFilterError.DoesNotMatch => return,
         }
     }
@@ -395,7 +434,7 @@ fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
         // assignmentRule can be interrupted by semicolon
         _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
             switch (err) {
-                ParseInterruptSignal.ReachedEndOfStatement => return err,
+                ParseInterruptSignal.ReachedSemicolon => return err,
                 TokenFilterError.DoesNotMatch => return,
             };
         advance(ctx);
@@ -406,7 +445,7 @@ fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
         advance(ctx);
     } else |err| {
         switch (err) {
-            ParseInterruptSignal.ReachedEndOfStatement => return err,
+            ParseInterruptSignal.ReachedSemicolon => return err,
             TokenFilterError.DoesNotMatch => return,
         }
     }
@@ -432,7 +471,7 @@ fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
     advance(ctx);
     const typeHintOrEqualsCtx = peekOrInterrupt(ctx, .semicolon) catch {
         ctx.pushError(.expectedTypeAnnotation);
-        return ParseInterruptSignal.ReachedEndOfStatement;
+        return ParseInterruptSignal.ReachedSemicolon;
     };
     const typeHintOrEquals = typeHintOrEqualsCtx.token;
     switch (typeHintOrEquals.tokenType) {
