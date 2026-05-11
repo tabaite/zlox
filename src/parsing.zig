@@ -134,34 +134,42 @@ const InterruptLevel = enum(u32) {
     }
 };
 
+fn isInterruptAtExact(sig: ParseInterruptSignal, target: InterruptLevel) bool {
+    const PIS = ParseInterruptSignal;
+    const sigLevel: InterruptLevel = switch (sig) {
+        PIS.ReachedParen => .parenthesis,
+        PIS.ReachedSemicolon => .semicolon,
+        PIS.ReachedBrace => .brace,
+        PIS.ReachedEOF => .eof,
+    };
+    return target == sigLevel;
+}
+
 fn isInterruptAtOrAbove(sig: ParseInterruptSignal, target: InterruptLevel) bool {
     const IntError = std.meta.Int(.unsigned, @bitSizeOf(anyerror));
     const PIS = ParseInterruptSignal;
-    const targetSig = switch (t) {
-        
-    }
 
     // kinda hacky haha
     const largerThanSet: @Vector(4, IntError) = switch (target) {
-        PIS.ReachedParen => .{
+        .parenthesis => .{
             @intFromError(PIS.ReachedParen),
             @intFromError(PIS.ReachedSemicolon),
             @intFromError(PIS.ReachedBrace),
             @intFromError(PIS.ReachedEOF),
         },
-        PIS.ReachedSemicolon => .{
+        .semicolon => .{
             @intFromError(PIS.ReachedSemicolon),
             @intFromError(PIS.ReachedSemicolon),
             @intFromError(PIS.ReachedBrace),
             @intFromError(PIS.ReachedEOF),
         },
-        PIS.ReachedBrace => .{
+        .brace => .{
             @intFromError(PIS.ReachedBrace),
             @intFromError(PIS.ReachedBrace),
             @intFromError(PIS.ReachedBrace),
             @intFromError(PIS.ReachedEOF),
         },
-        PIS.ReachedEOF => .{
+        .eof => .{
             @intFromError(PIS.ReachedEOF),
             @intFromError(PIS.ReachedEOF),
             @intFromError(PIS.ReachedEOF),
@@ -187,6 +195,8 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
 }
 
 inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSignal!TokenContext {
+    const simd = std.simd;
+
     const tracyZone = ztracy.ZoneN(@src(), "peek token stream or interrupt");
     defer tracyZone.End();
 
@@ -194,6 +204,7 @@ inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSig
     const token = tokenContext.token;
     const MatchVec = @Vector(4, u32);
     const TT = scanning.TokenType;
+    const PIS = ParseInterruptSignal;
 
     const interruptMatches: [4]MatchVec = .{
         .{ @intFromEnum(TT.eof), 0, 0, 0 },
@@ -201,10 +212,16 @@ inline fn peekOrInterrupt(ctx: Context, level: InterruptLevel) ParseInterruptSig
         .{ @intFromEnum(TT.eof), @intFromEnum(TT.rightBrace), @intFromEnum(TT.semicolon), 0 },
         .{ @intFromEnum(TT.eof), @intFromEnum(TT.rightBrace), @intFromEnum(TT.semicolon), @intFromEnum(TT.rightParen) },
     };
+    const interruptErrs: [4]PIS = .{
+        PIS.ReachedEOF,
+        PIS.ReachedBrace,
+        PIS.ReachedSemicolon,
+        PIS.ReachedParen,
+    };
 
     const mask: MatchVec = @splat(@intFromEnum(token.tokenType));
     const interruptResult = interruptMatches[level.asInt()] == mask;
-    return if (@reduce(.Or, interruptResult)) ParseInterruptSignal.ReachedSemicolon else tokenContext;
+    return if (simd.firstTrue(interruptResult)) |idx| interruptErrs[idx] else tokenContext;
 }
 
 inline fn advance(ctx: Context) void {
@@ -406,14 +423,16 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
 
-    declarationRule(ctx, astgen) catch {
-        // assignmentRule can be interrupted by semicolon
-        _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
-            switch (err) {
-                ParseInterruptSignal.ReachedSemicolon => return err,
-                TokenFilterError.DoesNotMatch => return,
-            };
-        advance(ctx);
+    declarationRule(ctx, astgen) catch |e| {
+        if (isInterruptAtExact(e, .semicolon)) {
+            // expr ;
+            //      ^ position
+            advance(ctx);
+            return;
+        } else {
+            // expr ( } | EOF )
+            _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch {};
+        }
     };
 
     const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
@@ -421,8 +440,8 @@ fn statementRule(ctx: Context, astgen: *AST) !void {
         advance(ctx);
     } else |err| {
         switch (err) {
-            ParseInterruptSignal.ReachedSemicolon => return err,
             TokenFilterError.DoesNotMatch => return,
+            else => return err,
         }
     }
 }
@@ -432,14 +451,16 @@ fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
 
-    assignmentRule(ctx, astgen) catch {
-        // assignmentRule can be interrupted by semicolon
-        _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch |err|
-            switch (err) {
-                ParseInterruptSignal.ReachedSemicolon => return err,
-                TokenFilterError.DoesNotMatch => return,
-            };
-        advance(ctx);
+    assignmentRule(ctx, astgen) catch |e| {
+        if (isInterruptAtExact(e, .semicolon)) {
+            // expr ;
+            //      ^ position
+            advance(ctx);
+            return;
+        } else {
+            // expr ( } | EOF )
+            _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch {};
+        }
     };
 
     const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
@@ -447,8 +468,8 @@ fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
         advance(ctx);
     } else |err| {
         switch (err) {
-            ParseInterruptSignal.ReachedSemicolon => return err,
             TokenFilterError.DoesNotMatch => return,
+            else => return err,
         }
     }
 }
