@@ -90,43 +90,6 @@ const ParseInterruptSignal = error{
     ReachedBrace,
     ReachedEOF,
 };
-
-fn isInterruptAtOrAbove(sig: ParseInterruptSignal, target: ParseInterruptSignal) bool {
-    const IntError = std.meta.Int(.unsigned, @bitSizeOf(anyerror));
-    const PIS = ParseInterruptSignal;
-
-    // kinda hacky haha
-    const largerThanSet: @Vector(4, IntError) = switch (sig) {
-        PIS.ReachedParen => .{
-            @intFromError(PIS.ReachedParen),
-            @intFromError(PIS.ReachedSemicolon),
-            @intFromError(PIS.ReachedBrace),
-            @intFromError(PIS.ReachedEOF),
-        },
-        PIS.ReachedSemicolon => .{
-            @intFromError(PIS.ReachedSemicolon),
-            @intFromError(PIS.ReachedSemicolon),
-            @intFromError(PIS.ReachedBrace),
-            @intFromError(PIS.ReachedEOF),
-        },
-        PIS.ReachedBrace => .{
-            @intFromError(PIS.ReachedBrace),
-            @intFromError(PIS.ReachedBrace),
-            @intFromError(PIS.ReachedBrace),
-            @intFromError(PIS.ReachedEOF),
-        },
-        PIS.ReachedEOF => .{
-            @intFromError(PIS.ReachedEOF),
-            @intFromError(PIS.ReachedEOF),
-            @intFromError(PIS.ReachedEOF),
-            @intFromError(PIS.ReachedEOF),
-        },
-    };
-    const mask: @Vector(4, IntError) = @splat(@intFromError(sig));
-    const matches: @Vector(4, bool) = mask == largerThanSet;
-    return @reduce(.Or, matches);
-}
-
 /// Interrupt levels define the scope of interrupts.
 /// Each level is a superset of the previous, so
 /// a Parenthesis interrupt level can also invoke a
@@ -170,6 +133,45 @@ const InterruptLevel = enum(u32) {
         return @intFromEnum(self);
     }
 };
+
+fn isInterruptAtOrAbove(sig: ParseInterruptSignal, target: InterruptLevel) bool {
+    const IntError = std.meta.Int(.unsigned, @bitSizeOf(anyerror));
+    const PIS = ParseInterruptSignal;
+    const targetSig = switch (t) {
+        
+    }
+
+    // kinda hacky haha
+    const largerThanSet: @Vector(4, IntError) = switch (target) {
+        PIS.ReachedParen => .{
+            @intFromError(PIS.ReachedParen),
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedSemicolon => .{
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedSemicolon),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedBrace => .{
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedBrace),
+            @intFromError(PIS.ReachedEOF),
+        },
+        PIS.ReachedEOF => .{
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+            @intFromError(PIS.ReachedEOF),
+        },
+    };
+    const mask: @Vector(4, IntError) = @splat(@intFromError(sig));
+    const matches: @Vector(4, bool) = mask == largerThanSet;
+    return @reduce(.Or, matches);
+}
 
 // HELPERS
 inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: []const TokenToBinaryExpr) ?BinaryExprType {
