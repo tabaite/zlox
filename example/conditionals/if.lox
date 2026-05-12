@@ -1,0 +1,9 @@
+fun main() {
+	var b = false;
+
+	if (!b) b = true;
+
+	if (b) {
+		var x = 15;
+	}
+}

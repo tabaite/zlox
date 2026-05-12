@@ -233,7 +233,7 @@ const TokenFilterError = error{
 };
 
 // Tries to "filter" a token through a match. If no match, return null, and log the error.
-inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interruptLevel: InterruptLevel) !Token {
+inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interruptLevel: InterruptLevel) (TokenFilterError || ParseInterruptSignal)!Token {
     const tracyZone = ztracy.ZoneN(@src(), "try match current token");
     defer tracyZone.End();
 
@@ -402,6 +402,7 @@ fn blockBodyRule(ctx: Context, astgen: *AST) StmtRange {
     while (peekOrInterrupt(ctx, .brace)) |t| {
         const tk = t.token;
         switch (tk.tokenType) {
+            .kwIf => ifRule(ctx, astgen) catch {},
             .leftBrace => _ = blockRule(ctx, astgen),
             else => statementRule(ctx, astgen) catch {
                 // interrupted by brace and returned early
@@ -419,18 +420,53 @@ fn blockBodyRule(ctx: Context, astgen: *AST) StmtRange {
 }
 
 fn ifRule(ctx: Context, astgen: *AST) !void {
-    _ = try filterCurrentTokenOrErr(.kwIf, ctx, .brace);
+    const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
+    defer tracyZone.End();
 
-    _ = try filterCurrentTokenOrErr(.leftParen, ctx, .semicolon) catch |e| switch (e) {};
+    _ = try filterCurrentTokenOrErr(.kwIf, ctx, .brace);
+    advance(ctx);
+
+    _ = filterCurrentTokenOrErr(.leftParen, ctx, .semicolon) catch |e| {
+        switch (e) {
+            TokenFilterError.DoesNotMatch => {},
+            // if ( ;
+            // -----^ skip over this...
+            //
+            // if ( }
+            // -----^ don't skip over this...
+            else => |interrupt| if (!isInterruptAtOrAbove(interrupt, .brace)) {
+                advance(ctx);
+                return interrupt;
+            },
+        }
+    };
+    advance(ctx);
 
     // use later
-    _ = try expressionRule(ctx, astgen, .semicolon);
+    _ = expressionRule(ctx, astgen, .semicolon) catch |e| {
+        // if (expr ;
+        // -----^ skip over this...
+        //
+        // if (expr }
+        // -----^ don't skip over this...
+        if (!isInterruptAtOrAbove(e, .brace)) {
+            advance(ctx);
+        }
+    };
 
-    _ = try filterCurrentTokenOrErr(.rightParen, ctx, .semicolon);
+    _ = filterCurrentTokenOrErr(.rightParen, ctx, .semicolon) catch |e| {
+        switch (e) {
+            TokenFilterError.DoesNotMatch => {},
+            else => |interrupt| if (!isInterruptAtOrAbove(interrupt, .brace)) {
+                advance(ctx);
+            },
+        }
+    };
+    advance(ctx);
 
     const body = try peekOrInterrupt(ctx, .semicolon);
     switch (body.token.tokenType) {
-        .leftBrace => _ = try blockRule(ctx, astgen),
+        .leftBrace => _ = blockRule(ctx, astgen),
         else => try statementNoDeclRule(ctx, astgen),
     }
 }
@@ -463,12 +499,12 @@ fn baseStatementRule(ctx: Context, astgen: *AST, firstRule: fn (Context, *AST) P
 }
 /// Returns an interrupt on a brace/EOF.
 fn statementRule(ctx: Context, astgen: *AST) !void {
-    baseStatementRule(ctx, astgen, declarationRule, "parse statement");
+    try baseStatementRule(ctx, astgen, declarationRule, "parse statement");
 }
 
 /// Returns an interrupt on a brace/EOF. No declarations allowed.
 fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
-    baseStatementRule(ctx, astgen, assignmentRule, "parse statement (no declaration)");
+    try baseStatementRule(ctx, astgen, assignmentRule, "parse statement (no declaration)");
 }
 
 fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
