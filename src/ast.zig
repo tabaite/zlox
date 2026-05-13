@@ -58,6 +58,11 @@ pub const Function = struct {
     argNames: Range,
 };
 
+pub const VariableRecord = struct {
+    hash: u128,
+    iteration: u128,
+};
+
 pub const VariableAssignment = struct {
     name: []u8,
     val: ExprHandle,
@@ -68,9 +73,6 @@ pub const Statement = union(enum) {
     assignment: VariableAssignment,
     expression: ExprHandle,
     funReturn: ExprHandle,
-    scopeStart,
-    phiScopeStart: union(enum) {},
-    scopeEnd,
 };
 
 pub const Expression = union(enum) {
@@ -124,6 +126,17 @@ pub const AST = struct {
         ast.statementList.deinit(alloc);
         ast.expressionList.deinit(alloc);
         ast.argumentList.deinit(alloc);
+    }
+
+    pub fn enterIfScope(ast: *AST) void {
+        allocatorMust(void, ast.functionList.append(
+            ast.alloc,
+            .{
+                .name = name,
+                .statements = stmts,
+                .argNames = .{ .start = argNameStart, .end = argNameEnd },
+            },
+        ));
     }
 
     pub fn newFunction(ast: *AST, name: []u8, argNames: [][]u8, stmts: Range) void {
