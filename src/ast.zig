@@ -58,6 +58,7 @@ pub const Function = struct {
     argNames: Range,
 };
 
+// fix size l8r
 pub const VariableRecord = struct {
     hash: u128,
     iteration: u128,
@@ -75,7 +76,15 @@ pub const Statement = union(enum) {
     funReturn: ExprHandle,
 };
 
+/// The Expression type is the actual storage type for expressions.
+/// Since this is exclusively used within the AST, Ranges are employed for references
+/// to many other objects within the AST.
 pub const Expression = union(enum) {
+    // this is too hard lowk
+    // We are gonna try to implement efficient phi nodes with dominance frontier checking
+    // (see R. Cytron, J. Ferrante, B. Rosen, M. Wegman, and K. Zadeck. Efficiently Computing Static Single Assignment Form and the Control Dependence Graph. ACM Transactions on Programming Languages and Systems, 13(4):451-490, October 1991)
+    phi: struct { valExprRange: Range },
+
     binary: struct { lhs: ExprHandle, rhs: ExprHandle },
     unary: struct { rhs: ExprHandle },
     literal: union(enum) {
@@ -102,6 +111,7 @@ pub fn allocatorMust(T: type, result: Allocator.Error!T) T {
 
 pub const AST = struct {
     alloc: Allocator,
+    phiValueList: ArrayList(ExprHandle),
     functionList: ArrayList(Function),
     functionArgumentNamesList: ArrayList([]u8),
     statementList: ArrayList(Statement),
@@ -111,6 +121,7 @@ pub const AST = struct {
     pub fn init(alloc: Allocator) AST {
         return .{
             .alloc = alloc,
+            .phiValueList = allocatorMust(ArrayList(ExprHandle), ArrayList(ExprHandle).initCapacity(alloc, 1024)),
             .functionList = allocatorMust(ArrayList(Function), ArrayList(Function).initCapacity(alloc, 1024)),
             .functionArgumentNamesList = allocatorMust(ArrayList([]u8), ArrayList([]u8).initCapacity(alloc, 4096)),
             .statementList = allocatorMust(ArrayList(Statement), ArrayList(Statement).initCapacity(alloc, 4096)),
@@ -122,21 +133,11 @@ pub const AST = struct {
         const alloc = ast.alloc;
 
         ast.functionList.deinit(alloc);
+        ast.phiValueList.deinit(alloc);
         ast.functionArgumentNamesList.deinit(alloc);
         ast.statementList.deinit(alloc);
         ast.expressionList.deinit(alloc);
         ast.argumentList.deinit(alloc);
-    }
-
-    pub fn enterIfScope(ast: *AST) void {
-        allocatorMust(void, ast.functionList.append(
-            ast.alloc,
-            .{
-                .name = name,
-                .statements = stmts,
-                .argNames = .{ .start = argNameStart, .end = argNameEnd },
-            },
-        ));
     }
 
     pub fn newFunction(ast: *AST, name: []u8, argNames: [][]u8, stmts: Range) void {
