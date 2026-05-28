@@ -1,5 +1,27 @@
 fun main() {
-    var pi = 3.14159265;
+    /// argument is not an expression
+    /// INFINITE LOOPING
+    call(15);
+
+    ///   v--- expected a valid expression, found rbrace
+    ///   v--- expected a semicolon, found rbrace
+    /// LOOPING
+    /// { 7 * }
+
+    /// statement end before right paren closing
+    /// LOOPING
+    /// sf(;
+
+    /// arguments are not seperated by a comma
+    /// LOOPING
+    /// qe(1 15);
+    
+    /// trailing comma in arguments
+    /// LOOPING
+    /// burger(6, 7,);
+
+
+
     var height = 12;
     {
         var length = pi * 2;

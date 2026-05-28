@@ -214,7 +214,6 @@ pub fn printAST(ast: *AST, out: *Writer) !void {
                     _ = try out.write("{ return ");
                     try printASTExpr(ast, r, out);
                 },
-                .phiScopeStart, .scopeEnd, .scopeStart => {},
             }
             _ = try out.write(" }\n");
         }
@@ -225,6 +224,9 @@ pub fn printASTExpr(ast: *AST, exprIdx: u32, out: *Writer) !void {
     const expr = ast.expressionList.items[exprIdx];
 
     switch (expr) {
+        .phi => {
+            _ = try out.write("( phi TODO )");
+        },
         .binary => |b| {
             _ = try out.write("( binary ");
             try printASTExpr(ast, b.lhs, out);

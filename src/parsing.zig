@@ -492,7 +492,7 @@ fn baseStatementRule(ctx: Context, astgen: *AST, firstRule: fn (Context, *AST) P
         advance(ctx);
     } else |err| {
         switch (err) {
-            TokenFilterError.DoesNotMatch => return,
+            TokenFilterError.DoesNotMatch => {},
             else => return err,
         }
     }
@@ -742,6 +742,11 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
         // Missing comma
         // foo(a b)
         // ------^ expected comma, found expression
+        //
+        // TODO:
+        // Interrupted argument
+        // foo(1 + )
+        // --------^ interrupt
         advance(ctx);
         var args: [MAX_ARGS]ExprHandle = undefined;
         var argNums: usize = 0;
@@ -770,7 +775,13 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
                 }
                 argNums += 1;
 
-                const continuation = peekOrInterrupt(ctx, interruptLevel) catch {
+                const continuation = peekOrInterrupt(ctx, interruptLevel) catch |e| {
+                    if (isInterruptAtExact(e, .parenthesis)) {
+                        // call (1 + )
+                        // ----------^ interrupt
+                        advance(ctx);
+                        return NULL_HANDLE;
+                    }
                     _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch return NULL_HANDLE;
                     return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
                 };
@@ -821,6 +832,15 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
     }
 }
 
+/// RULE POSITIONAL CONTRACT:
+/// If interrupted:
+/// Head remains on the token causing the interrupt.
+/// (1 + 2;
+/// ------^ interrupt, head position
+/// If successful:
+/// Head is on the token after the primary.
+/// 1 ...
+/// ---^ head position
 fn primaryRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse primary");
     defer tracyZone.End();
@@ -834,7 +854,15 @@ fn primaryRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) Parse
     const result = switch (tok.token.tokenType) {
         .leftParen => grouping: {
             advance(ctx);
-            const expr = try expressionRule(ctx, astgen, .parenthesis);
+            const expr = expressionRule(ctx, astgen, .parenthesis) catch |e| {
+                if (isInterruptAtExact(e, .parenthesis)) {
+                    // ( 1 + )
+                    // ------^ interrupt here
+                    advance(ctx);
+                    return NULL_HANDLE;
+                }
+                return e;
+            };
 
             // current will be the token following expr
             // the only other interrupt level above semicolon is right paren, which we don't want to interfere with our stuff
