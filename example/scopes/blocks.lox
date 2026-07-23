@@ -1,7 +1,8 @@
 fun main() {
     /// argument is not an expression
     /// INFINITE LOOPING
-    call(15);
+    5 * 2;
+    // cast();
 
     ///   v--- expected a valid expression, found rbrace
     ///   v--- expected a semicolon, found rbrace
@@ -22,12 +23,12 @@ fun main() {
 
 
 
-    var height = 12;
-    {
-        var length = pi * 2;
-    }
+    // var height = 12;
+    // {
+        // var length = pi * 2;
+    // }
 
-    var b = false + 2;
+    // var b = false + 2;
 
-    var area = height * "as";
+    // var area = height * "as";
 }

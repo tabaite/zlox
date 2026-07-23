@@ -650,12 +650,23 @@ fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) Pa
 }
 
 // might be the most atrocious function body i've ever written
+/// RULE POSITIONAL CONTRACT:
+/// If interrupted:
+/// Head remains on the token causing the interrupt.
+/// (1 + 2;
+/// ------^ interrupt, head position
+/// If successful:
+/// Head is on the token after the primary.
+/// 1 ...
+/// ---^ head position
 inline fn binaryRule(ctx: Context, astgen: *AST, comptime ruleName: [:0]const u8, comptime matches: []const TokenToBinaryExpr, previousRule: fn (Context, *AST, InterruptLevel) ParseInterruptSignal!ExprHandle, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse binary " ++ ruleName);
     defer tracyZone.End();
 
     var expression = try previousRule(ctx, astgen, interruptLevel);
     while (peekOrInterrupt(ctx, interruptLevel)) |tok| {
+        // 5 * 5 +
+        //
         _ = matchTokenToExprOrNull(tok.token.tokenType, matches) orelse break;
 
         advance(ctx);
@@ -710,6 +721,15 @@ fn unaryRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseIn
 }
 
 // Calls and variable usages both start with an identifier, so they're combined into one rule.
+/// RULE POSITIONAL CONTRACT:
+/// If interrupted:
+/// Head remains on the token causing the interrupt.
+/// (1 + 2;
+/// ------^ interrupt, head position
+/// If successful:
+/// Head is on the token after the primary.
+/// 1 ...
+/// ---^ head position
 fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
     const iter = ctx.tokenIterator;
 
