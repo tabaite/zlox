@@ -1,34 +1,11 @@
 fun main() {
-    /// argument is not an expression
-    /// INFINITE LOOPING
-    5 * 2;
-    // cast();
+    var height = 12;
+    {
+        var length = pi * 2;
+        height = 5;
+    }
 
-    ///   v--- expected a valid expression, found rbrace
-    ///   v--- expected a semicolon, found rbrace
-    /// LOOPING
-    /// { 7 * }
+    var b = false + 2;
 
-    /// statement end before right paren closing
-    /// LOOPING
-    /// sf(;
-
-    /// arguments are not seperated by a comma
-    /// LOOPING
-    /// qe(1 15);
-    
-    /// trailing comma in arguments
-    /// LOOPING
-    /// burger(6, 7,);
-
-
-
-    // var height = 12;
-    // {
-        // var length = pi * 2;
-    // }
-
-    // var b = false + 2;
-
-    // var area = height * "as";
+    var area = height * "as";
 }

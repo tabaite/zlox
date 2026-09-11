@@ -629,7 +629,7 @@ fn returnRule(ctx: Context, astgen: *AST) !void {
 
     const ret = try peekOrInterrupt(ctx, .semicolon);
     if (ret.token.tokenType != .kwReturn) {
-        try declarationRule(ctx, astgen);
+        _ = try expressionRule(ctx, astgen, .semicolon);
         return;
     }
     advance(ctx);
