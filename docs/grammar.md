@@ -3,15 +3,11 @@
 program        → ( function )\* EOF
 function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")\* (IDENTIFIER ":" type) )? ")" ( type )? block
 arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
-block           "{" ( line )\* "}"
-line           → ( statement | if | while )
-if             → "if" "(" expression ")" statementNoDecl
-                 ( "else" statementNoDecl )?
-while          → "while" "(" expression ")" statementNoDecl
-statement      → ( return | expression | assignment | declaration ) ";"
-statementNoDecl→ ( return | expression | assignment ) ";"
-declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
+if             → "if" "(" expression ")" block
+block          → "{" ( statement )\* "}"
+statement      → ( return | declaration | expression | assignment ) ";"
 return         → "return" expression
+declaration    → "var" IDENTIFIER ( ":" type )? ( "=" expression )?
 assignment     → IDENTIFIER "=" expression
 expression     → or
 or             → and ( "or" and )\*

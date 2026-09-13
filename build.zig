@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
 
     const ztracy_enabled_default = switch (optimize) {
@@ -59,9 +60,8 @@ pub fn build(b: *std.Build) void {
         .name = "zlox",
         .root_module = exe_mod,
     });
-    exe.linkLibC();
     exe.root_module.addImport("ztracy", ztracy.module("root"));
-    exe.linkLibrary(ztracy.artifact("tracy"));
+    exe.root_module.linkLibrary(lib);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

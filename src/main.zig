@@ -40,7 +40,7 @@ pub const pipelineMap = std.StaticStringMap(ProgramPipeline).initComptime(.{
     .{ "evaluate", ProgramPipeline{ .maxStage = .evaluate } },
 });
 
-pub fn main() !void {
+pub fn main(initData: std.process.Init) !void {
     ztracy.FrameMarkStart("runtime");
     defer ztracy.FrameMarkEnd("runtime");
 
@@ -49,19 +49,22 @@ pub fn main() !void {
 
     var debug = std.heap.DebugAllocator(.{}){};
     defer _ = debug.deinit();
+    // tracy will track our allocations!
     var tracy = ztracy.TracyAllocator.init(switch (builtin.mode) {
         .Debug => debug.allocator(),
         .ReleaseFast, .ReleaseSafe, .ReleaseSmall => std.heap.c_allocator,
     });
     const gpa = tracy.allocator();
 
-    var args = try std.process.argsWithAllocator(gpa);
+    var args = try initData.minimal.args.iterateAllocator(gpa);
     defer args.deinit();
     // first arg will be our program
     _ = args.next();
 
+    const io = initData.io;
+
     var stderrBuf: [4096]u8 = undefined;
-    var stderrWriter = std.fs.File.stderr().writer(&stderrBuf);
+    var stderrWriter = std.Io.File.stderr().writer(io, &stderrBuf);
     const stderr = &stderrWriter.interface;
     defer stderr.flush() catch @panic("write to stderr failed!");
 
@@ -81,16 +84,16 @@ pub fn main() !void {
         const fopenZone = ztracy.ZoneN(@src(), "read source file contents");
         defer fopenZone.End();
 
-        const cwd = std.fs.cwd();
-        var file = cwd.openFile(path, .{ .mode = .read_only }) catch {
-            const cwdDir = try cwd.realpathAlloc(gpa, ".");
+        const cwd = std.Io.Dir.cwd();
+        var file = cwd.openFile(io, path, .{ .mode = .read_only }) catch {
+            const cwdDir = try cwd.realPathFileAlloc(io, ".", gpa);
             defer gpa.free(cwdDir);
             try stderr.print("File {s} did not exist\nCWD is listed as {s}\n", .{ path, cwdDir });
             return;
         };
-        defer file.close();
+        defer file.close(io);
         var readerBuffer: [1024]u8 = undefined;
-        var freader = file.reader(&readerBuffer);
+        var freader = file.reader(io, &readerBuffer);
         const reader = &freader.interface;
 
         break :reading reader.allocRemaining(gpa, .limited(u32Max)) catch |e| switch (e) {
