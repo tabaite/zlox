@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.root_module.linkLibrary(lib);
+    exe.root_module.linkLibrary(ztracy.artifact("tracy"));
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
