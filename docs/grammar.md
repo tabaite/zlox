@@ -3,12 +3,13 @@
 \* denotes a rule which has not been updated to be compliant.
 
 program        → ( function )\* EOF
-function       → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")\* (IDENTIFIER ":" type) )? ")" ( type )? block
+declaration  * → ( funDecl | varDecl | statement )
+funDecl        → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")\* (IDENTIFIER ":" type) )? ")" ( type )? block
+varDecl      * → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
 arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
 block          → "{" ( statement )\* "}"
 statement    * → ( return | declaration | expression )
 exprStmt     * → expression ";"
-declaration  * → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
 return       * → "return" expression ";"
 if           * → "if" "(" expression ")" statement ( "else" statement )
 expression   * → assignment

@@ -252,6 +252,8 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interrup
     return tokenContext.token;
 }
 
+// TODO: ignoreTokenFilterError: (TokenFilterError || ParseInterruptSignal) -> (ParseInterruptSignal)
+
 // The way this AST parser works is somewhat simple.
 // Each rule, described by the table above is a function.
 // The function mutates the state of the parser, moving the position forward
@@ -261,18 +263,47 @@ pub fn parseAndCompileAll(ctx: Context, astgen: *AST) void {
     defer parseZone.End();
 
     while (peekOrInterrupt(ctx, .eof)) |_| {
-        functionDeclarationRule(ctx, astgen);
+        declarationRule(ctx, astgen, .eof) catch break;
     } else |_| {}
 }
 
+/// Token skipping contract: This function by itself does not modify the stream,
+/// but it dynamically chooses a function to run based on the next token that WILL.
+/// It should follow the contract of leaving
+fn declarationRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
+    const first = try peekOrInterrupt(ctx, .eof);
+
+    // all decls fix here..!
+    // TODO: fix this first buddy;
+
+    // isn't this a bad idea? the answer is i think it is better to have this hacky approach centralized in
+    // the declaration rule (kinda like in the lang spec) than have it unpredictably handled in the function declaration rule
+    switch (first.token.tokenType) {
+        .kwVar => try variableDeclarationRule(ctx, astgen, interruptLevel),
+        .kwFun => try functionDeclarationRule(ctx, astgen),
+        // this means that
+        // a) there are calls and such allowed at the top of files
+        // b) you can literally define a new class INSIDE a function and whatnot
+        else => try statementRule(ctx, astgen, interruptLevel),
+    }
+}
+
+/// This doesn't accept an interruptLevel parameter because it
+/// would be really weird for this to have an interrupt level greater than eof
+/// (as any early ending brace should eagerly be consumed as its own).
+/// as for the others,
+/// a) there's no rule where a function declaration is inside parenthesis
+/// b) function declarations aren't in any statement rules either so semicolons never apply
 fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
 
     const iter = ctx.tokenIterator;
+
+    // fun foo ...
+    // ^^^-^^^- first two
     _ = filterCurrentTokenOrErr(.kwFun, ctx, .eof) catch {};
     advance(ctx);
-
     const funNameTOrEof = filterCurrentTokenOrErr(.identifier, ctx, .eof);
     advance(ctx);
 
@@ -294,8 +325,12 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
             .sourceStart = 0,
         },
     };
-    if (argStart.token.tokenType != .rightParen) while (peekOrInterrupt(ctx, .eof)) |_| {
-        const argName = filterCurrentTokenOrErr(.identifier, ctx, .eof) catch break;
+    // fun foo ( ...
+    // --------^
+    if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, .eof)) |_| {
+        const argName = filterCurrentTokenOrErr(.identifier, ctx, .eof) catch break :processArgs;
+        // fun foo ( name ...
+        // ----------^^^^
 
         advance(ctx);
         const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, .eof);
@@ -303,31 +338,66 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
             const typeDesignator = typeDesignatorCtx.token;
             switch (typeDesignator.tokenType) {
                 .comma => {
+                    // ----------vvvv WHERE TYPE
+                    // fun foo ( name, x ...
+                    // --------------^ cursor position
+                    // (DEPRECATE TYPES PLS)
                     ctx.pushError(.expectedTypeAnnotation);
                 },
 
                 .colon => {
+                    // fun foo ( name : number ...
+                    // ---------------^ (spaces for dramatic effect)
                     advance(ctx);
                     const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
-                    if (argTypeOrInterrupt) |_| {
+                    if (argTypeOrInterrupt) |argType| {
+                        // fun foo ( name : <argType> ...
+                        // ------------------^^^^^^^ yeah
+                        switch (argType.token.tokenType) {
+                            .tyNum, .tyBool, .tyString, .identifier => {
+                                advance(ctx);
+                            },
+                            .tyVoid => {
+                                ctx.pushError(.argumentTypeCannotBeVoid);
+                                advance(ctx);
+                            },
+                            .comma => {
+                                // -----------------v DO NOT ADVANCE
+                                // fun foo ( name : , ...
+                                ctx.pushError(.expectedTypeToken);
+                            },
+                            else => {
+                                ctx.pushError(.expectedTypeToken);
+                                advance(ctx);
+                            },
+                        }
+
                         args[argCount] = iter.exchangeTokenForSource(argName);
                     } else |_| {
+                        // fun foo ( name : EOF ...
+                        // -----------------^^^ (huh?)
                         ctx.pushError(.expectedTypeToken);
                     }
-                    advance(ctx);
                 },
 
                 else => {
+                    // fun foo ( name . ...
+                    // ---------------^ (huh?)
+                    // this shouldn't be a super common error, but the main case we consider is
+                    // fun foo ( name. name2, name3 ), where we mistype this character for a comma
                     ctx.pushError(.expectedTypeAnnotation);
-                    break;
                 },
             }
-        } else |_| {}
+        } else |_| {
+            // fun foo ( name EOF
+        }
 
         const continuationOrInterrupt = peekOrInterrupt(ctx, .eof);
         if (continuationOrInterrupt) |continuation| {
             switch (continuation.token.tokenType) {
                 .rightParen => {
+                    // fun foo ( name )
+                    // ---------------^
                     if (argCount == MAX_ARGS - 1) {
                         // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         ctx.pushError(.argLimitExceeded);
@@ -335,33 +405,48 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
                     } else {
                         argCount += 1;
                     }
-                    break;
+                    break :processArgs;
                 },
                 .comma => {
+                    // fun foo ( name, other )
+                    // --------------^
                     advance(ctx);
                     if (argCount == MAX_ARGS - 1) {
-                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         ctx.pushError(.argLimitExceeded);
-                        break;
                     } else {
                         argCount += 1;
                     }
                 },
-                else => ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } }),
+                // fun foo ( name .
+                // ---------------^ ??
+                else => {
+                    // in accordance with the previous comment we are treating it like a comma
+                    advance(ctx);
+                    if (argCount == MAX_ARGS - 1) {
+                        ctx.pushError(.argLimitExceeded);
+                    } else {
+                        argCount += 1;
+                    }
+                },
             }
         } else |_| {}
     } else |_| {};
 
+    // fun foo ( name, ..., nameN )
+    // ---------------------------^ we need this end here
     _ = filterCurrentTokenOrErr(.rightParen, ctx, .eof) catch {};
     advance(ctx);
 
+    // fun foo ( name ) returnType ...
+    // -----------------^^^^^^^^^^
     const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 } };
     switch (returnTypeTokenOrNull.token.tokenType) {
         .tyBool, .tyNum, .tyString, .tyVoid => {
             advance(ctx);
         },
         // Start of function body. We assume this means void.
-        //         v
+        // -----------v
+        // fun foo () { ... }
         .leftBrace => {},
         else => {
             advance(ctx);
@@ -376,6 +461,120 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
     if (funNameTOrEof) |funNameT| {
         astgen.newFunction(ctx.tokenIterator.exchangeTokenForSource(funNameT), argNames, stmts);
     } else |_| {}
+}
+
+/// Variable declarations are now allowed in the top level, so this takes an interrupt level arg
+/// since it can be both brace interrupted (block) and eof interrupted (top-level).
+fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
+    const tracyZone = ztracy.ZoneN(@src(), "try parse declaration or fallthrough");
+    defer tracyZone.End();
+
+    const iter = ctx.tokenIterator;
+    const decl = try peekOrInterrupt(ctx, interruptLevel);
+
+    // this is fed by the declaration rule so this should NEVER run
+    if (decl.token.tokenType != .kwVar) {
+        unreachable;
+    }
+    advance(ctx);
+
+    // var foo ...
+    // ^^^-^^^
+    const nameToken = try peekOrInterrupt(ctx, interruptLevel);
+    if (nameToken.token.tokenType != .identifier) {
+        ctx.pushError(.{ .expectedToken = .{ .expected = .identifier } });
+    }
+
+    advance(ctx);
+    const typeHintOrEqualsCtx = peekOrInterrupt(ctx, interruptLevel) catch |e| {
+        // var foo EOF - we never got a semicolon :(
+        ctx.pushError(.expectedTypeAnnotation);
+        return e;
+    };
+    const typeHintOrEquals = typeHintOrEqualsCtx.token;
+    switch (typeHintOrEquals.tokenType) {
+        .colon => {
+            advance(ctx);
+
+            // var foo : typeToken
+            // ----------^^^^^^^^^
+            const typeToken = peekOrInterrupt(ctx, interruptLevel) catch |e| {
+                // var foo : EOF
+                ctx.pushError(.expectedTypeToken);
+                ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
+                return e;
+            };
+            _ = switch (typeToken.token.tokenType) {
+                .tyBool => .bool,
+                .tyNum => .number,
+                .tyString => .string,
+                .tyVoid => .nil,
+                else => e: {
+                    ctx.pushError(.expectedTypeToken);
+                    break :e .nil;
+                },
+            };
+
+            advance(ctx);
+
+            // var foo : typeToken
+            // ----------^^^^^^^^^
+            const nextCtx = try peekOrInterrupt(ctx, interruptLevel);
+            const next = nextCtx.token;
+            const initialValue: ExprHandle = val: {
+                switch (next.tokenType) {
+                    // var foo : typeToken = ...
+                    // --------------------^
+                    .equal => {
+                        advance(ctx);
+                        break :val try expressionRule(ctx, astgen, interruptLevel);
+                    },
+                    // var foo : typeToken;
+                    // -------------------^
+                    .semicolon => {
+                        break :val astgen.newExpression(.{ .literal = .nil });
+                    },
+                    // var foo : typeToken .
+                    // --------------------^
+                    else => {
+                        ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
+                        break :val astgen.newExpression(.{ .literal = .nil });
+                    },
+                }
+            };
+
+            _ = astgen.newStatement(.{
+                .declaration = .{
+                    .name = iter.exchangeTokenForSource(nameToken.token),
+                    .val = initialValue,
+                },
+            });
+        },
+        .equal => {
+            // var foo = ...
+            // --------^ rudimentary type inference
+            advance(ctx);
+            _ = astgen.newStatement(.{
+                .declaration = .{
+                    .name = iter.exchangeTokenForSource(nameToken.token),
+                    .val = try expressionRule(ctx, astgen, interruptLevel),
+                },
+            });
+        },
+        .semicolon => {
+            // var foo; - this is technically allowed but we're stripping out types l8r
+            // -------^
+            ctx.pushError(.expectedTypeAnnotation);
+            advance(ctx);
+        },
+        else => {
+            // var foo . - we need a semicolon here
+            // --------^ we won't advance here, instead leave it
+            // the next statement scan will go down to primary and mark it as
+            // unrecognized then advance itself
+            ctx.pushError(.{ .expectedToken = .semicolon });
+        },
+    }
 }
 
 fn blockRule(ctx: Context, astgen: *AST) StmtRange {
@@ -499,128 +698,13 @@ fn baseStatementRule(ctx: Context, astgen: *AST, firstRule: fn (Context, *AST) P
 }
 /// Returns an interrupt on a brace/EOF.
 fn statementRule(ctx: Context, astgen: *AST) !void {
-    try baseStatementRule(ctx, astgen, declarationRule, "parse statement");
+    // TODO: fix this too;
+    try baseStatementRule(ctx, astgen, variableDeclarationRule, "parse statement");
 }
 
 /// Returns an interrupt on a brace/EOF. No declarations allowed.
 fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
     try baseStatementRule(ctx, astgen, assignmentRule, "parse statement (no declaration)");
-}
-
-fn declarationRule(ctx: Context, astgen: *AST) ParseInterruptSignal!void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse declaration or fallthrough");
-    defer tracyZone.End();
-
-    const iter = ctx.tokenIterator;
-    const decl = try peekOrInterrupt(ctx, .semicolon);
-    if (decl.token.tokenType != .kwVar) {
-        _ = try assignmentRule(ctx, astgen);
-        return;
-    }
-    advance(ctx);
-
-    const nameToken = try peekOrInterrupt(ctx, .semicolon);
-    if (nameToken.token.tokenType != .identifier) {
-        ctx.pushError(.{ .expectedToken = .{ .expected = .identifier } });
-    }
-
-    advance(ctx);
-    const typeHintOrEqualsCtx = peekOrInterrupt(ctx, .semicolon) catch {
-        ctx.pushError(.expectedTypeAnnotation);
-        return ParseInterruptSignal.ReachedSemicolon;
-    };
-    const typeHintOrEquals = typeHintOrEqualsCtx.token;
-    switch (typeHintOrEquals.tokenType) {
-        .colon => {
-            advance(ctx);
-
-            const typeToken = peekOrInterrupt(ctx, .semicolon) catch |e| {
-                // todo: fix
-                ctx.pushError(.expectedTypeToken);
-                return e;
-            };
-            _ = switch (typeToken.token.tokenType) {
-                .tyBool => .bool,
-                .tyNum => .number,
-                .tyString => .string,
-                .tyVoid => .nil,
-                else => e: {
-                    ctx.pushError(.expectedTypeToken);
-                    break :e .nil;
-                },
-            };
-
-            advance(ctx);
-
-            const nextCtx = try peekOrInterrupt(ctx, .semicolon);
-            const next = nextCtx.token;
-            const initialValue: ExprHandle = val: {
-                switch (next.tokenType) {
-                    .equal => {
-                        advance(ctx);
-                        break :val try expressionRule(ctx, astgen, .semicolon);
-                    },
-                    .semicolon => {
-                        break :val astgen.newExpression(.{ .literal = .nil });
-                    },
-                    else => {
-                        ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
-                        break :val astgen.newExpression(.{ .literal = .nil });
-                    },
-                }
-            };
-
-            _ = astgen.newStatement(.{
-                .declaration = .{
-                    .name = iter.exchangeTokenForSource(nameToken.token),
-                    .val = initialValue,
-                },
-            });
-        },
-        .equal => {
-            advance(ctx);
-            _ = astgen.newStatement(.{
-                .declaration = .{
-                    .name = iter.exchangeTokenForSource(nameToken.token),
-                    .val = try expressionRule(ctx, astgen, .semicolon),
-                },
-            });
-        },
-        // Includes semicolon.
-        else => {
-            ctx.pushError(.expectedTypeAnnotation);
-        },
-    }
-}
-
-fn assignmentRule(ctx: Context, astgen: *AST) !void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
-    defer tracyZone.End();
-
-    const prevPosition = ctx.tokenIterator.*;
-
-    const name = try peekOrInterrupt(ctx, .semicolon);
-    if (name.token.tokenType != .identifier) {
-        return try returnRule(ctx, astgen);
-    }
-
-    advance(ctx);
-
-    const eq = try peekOrInterrupt(ctx, .semicolon);
-    if (eq.token.tokenType != .equal) {
-        ctx.tokenIterator.* = prevPosition;
-        return try returnRule(ctx, astgen);
-    }
-
-    advance(ctx);
-
-    const val = try expressionRule(ctx, astgen, .semicolon);
-    _ = astgen.newStatement(.{
-        .assignment = .{
-            .name = ctx.tokenIterator.exchangeTokenForSource(name.token),
-            .val = val,
-        },
-    });
 }
 
 fn returnRule(ctx: Context, astgen: *AST) !void {
@@ -646,7 +730,37 @@ fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) Pa
         ctx.pushError(.expectedExpression);
         return NULL_HANDLE;
     };
-    return try orRule(ctx, astgen, interruptLevel);
+    return try assignmentRule(ctx, astgen, interruptLevel);
+}
+
+fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void {
+    const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
+    defer tracyZone.End();
+
+    const prevPosition = ctx.tokenIterator.*;
+
+    const name = try peekOrInterrupt(ctx, interruptLevel);
+    if (name.token.tokenType != .identifier) {
+        return try orRule(ctx, astgen);
+    }
+
+    advance(ctx);
+
+    const eq = try peekOrInterrupt(ctx, interruptLevel);
+    if (eq.token.tokenType != .equal) {
+        ctx.tokenIterator.* = prevPosition;
+        return try orRule(ctx, astgen);
+    }
+
+    advance(ctx);
+
+    const val = try expressionRule(ctx, astgen, interruptLevel);
+    _ = astgen.newStatement(.{
+        .assignment = .{
+            .name = ctx.tokenIterator.exchangeTokenForSource(name.token),
+            .val = val,
+        },
+    });
 }
 
 // might be the most atrocious function body i've ever written
