@@ -1,0 +1,11 @@
+fun main() {
+	// :trollface:
+	fun junk(a: number, c: number, d: number) {
+	    var s = a * c + d;
+	}
+
+    var e = isSixOne(add(27, 57));
+
+    // weird invalid parse
+    { 7 * }
+}

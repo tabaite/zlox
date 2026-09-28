@@ -5,6 +5,34 @@ const ast = @import("ast.zig");
 const context = @import("context.zig");
 const ztracy = @import("ztracy");
 
+// UNLESS DIRECTLY STATED OTHERWISE
+// The positional contract each rule follows is:
+// - If completed "successfully", the cursor lies on the token immediately after the rule.
+// - If interrupted by a token, the cursor lies on the offending token.
+//
+// A rule is "interrupted" if it encounters certain tokens which are associated with the end of big rules.
+// - A right parenthesis for the end of function arguments
+// - A semicolon for the end of a line
+// - A right brace for the end of blocks
+// - The end of file for the end of a program
+//
+// The observation that lead to this was:
+// Parsing rules typically expect the cursor to be on the token directly after any other rule they call.
+// Example:
+//
+// x + 2 ;
+// ------- statement
+// ----- expression
+// the statement expects the expression to hand control back to it with the cursor on the statement (so it can check it)
+//
+// But what if the semicolon comes early?
+//
+// x + ;
+// With a naive parser, the expression rule would try to process the semicolon as an expression and then fail. With an approach
+// where one error immediately cuts off parsing, this would be fine: it would probably return an error like "expected expression, found semicolon".
+// With an approach where we attempt to continue parsing through errors, this would be disasterous, as the statement rule might look to the
+// beginning of another statement for its semicolon, causing a cascade of extrememly unhelpful errors.
+
 const NULL_HANDLE = ast.NULL_HANDLE;
 const MAX_ARGS = ast.MAX_ARGS;
 
@@ -232,8 +260,10 @@ const TokenFilterError = error{
     DoesNotMatch,
 };
 
-// Tries to "filter" a token through a match. If no match, return null, and log the error.
-inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interruptLevel: InterruptLevel) (TokenFilterError || ParseInterruptSignal)!Token {
+/// Tries to "filter" a token through a match. If no match log the error silently and return the token as usual.
+/// This is a helper function to replace the if (t.tokenType != ...) in most cases. Sometimes when different paths are
+/// taken based on a token this is not used.
+inline fn filterCurrentToken(tt: scanning.TokenType, ctx: Context, interruptLevel: InterruptLevel) ParseInterruptSignal!Token {
     const tracyZone = ztracy.ZoneN(@src(), "try match current token");
     defer tracyZone.End();
 
@@ -247,12 +277,9 @@ inline fn filterCurrentTokenOrErr(tt: scanning.TokenType, ctx: Context, interrup
     };
     if (tokenContext.token.tokenType != tt) {
         log.push(.{ .expectedToken = .{ .expected = tt } }, tokenContext);
-        return TokenFilterError.DoesNotMatch;
     }
     return tokenContext.token;
 }
-
-// TODO: ignoreTokenFilterError: (TokenFilterError || ParseInterruptSignal) -> (ParseInterruptSignal)
 
 // The way this AST parser works is somewhat simple.
 // Each rule, described by the table above is a function.
@@ -273,9 +300,6 @@ pub fn parseAndCompileAll(ctx: Context, astgen: *AST) void {
 fn declarationRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
     const first = try peekOrInterrupt(ctx, .eof);
 
-    // all decls fix here..!
-    // TODO: fix this first buddy;
-
     // isn't this a bad idea? the answer is i think it is better to have this hacky approach centralized in
     // the declaration rule (kinda like in the lang spec) than have it unpredictably handled in the function declaration rule
     switch (first.token.tokenType) {
@@ -294,7 +318,7 @@ fn declarationRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) P
 /// as for the others,
 /// a) there's no rule where a function declaration is inside parenthesis
 /// b) function declarations aren't in any statement rules either so semicolons never apply
-fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
+fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
 
@@ -302,12 +326,12 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
 
     // fun foo ...
     // ^^^-^^^- first two
-    _ = filterCurrentTokenOrErr(.kwFun, ctx, .eof) catch {};
+    _ = try filterCurrentToken(.kwFun, ctx, .eof);
     advance(ctx);
-    const funNameTOrEof = filterCurrentTokenOrErr(.identifier, ctx, .eof);
+    const funName = try filterCurrentToken(.identifier, ctx, .eof);
     advance(ctx);
 
-    _ = filterCurrentTokenOrErr(.leftParen, ctx, .eof) catch {};
+    _ = try filterCurrentToken(.leftParen, ctx, .eof);
     advance(ctx);
 
     var args: [MAX_ARGS][]u8 = undefined;
@@ -316,19 +340,11 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
     // if EOF, main ( EOF,
     // skip parsing arguments
     // should be fine to implement this hack
-    const argStart = peekOrInterrupt(ctx, .eof) catch TokenContext{
-        .newPos = 0,
-        .lineNumber = 0,
-        .token = .{
-            .tokenType = .rightParen,
-            .sourceEndExclusive = 0,
-            .sourceStart = 0,
-        },
-    };
+    const argStart = try peekOrInterrupt(ctx, .eof);
     // fun foo ( ...
     // --------^
     if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, .eof)) |_| {
-        const argName = filterCurrentTokenOrErr(.identifier, ctx, .eof) catch break :processArgs;
+        const argName = try filterCurrentToken(.identifier, ctx, .eof);
         // fun foo ( name ...
         // ----------^^^^
 
@@ -373,10 +389,11 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
                         }
 
                         args[argCount] = iter.exchangeTokenForSource(argName);
-                    } else |_| {
+                    } else |err| {
                         // fun foo ( name : EOF ...
                         // -----------------^^^ (huh?)
                         ctx.pushError(.expectedTypeToken);
+                        return err;
                     }
                 },
 
@@ -434,12 +451,15 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
 
     // fun foo ( name, ..., nameN )
     // ---------------------------^ we need this end here
-    _ = filterCurrentTokenOrErr(.rightParen, ctx, .eof) catch {};
+    _ = try filterCurrentToken(.rightParen, ctx, .eof);
     advance(ctx);
 
     // fun foo ( name ) returnType ...
     // -----------------^^^^^^^^^^
-    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch TokenContext{ .newPos = 0, .lineNumber = 0, .token = .{ .tokenType = .invalidChar, .sourceStart = 0, .sourceEndExclusive = 0 } };
+    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch |e| {
+        ctx.pushError(.expectedTypeToken);
+        return e;
+    };
     switch (returnTypeTokenOrNull.token.tokenType) {
         .tyBool, .tyNum, .tyString, .tyVoid => {
             advance(ctx);
@@ -456,11 +476,9 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) void {
 
     const argNames = args[0..argCount];
     // Function body
-    const stmts = blockRule(ctx, astgen);
+    const stmts = try blockRule(ctx, astgen);
 
-    if (funNameTOrEof) |funNameT| {
-        astgen.newFunction(ctx.tokenIterator.exchangeTokenForSource(funNameT), argNames, stmts);
-    } else |_| {}
+    astgen.newFunction(ctx.tokenIterator.exchangeTokenForSource(funName), argNames, stmts);
 }
 
 /// Variable declarations are now allowed in the top level, so this takes an interrupt level arg
@@ -572,49 +590,46 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptLevel: Interrupt
             // --------^ we won't advance here, instead leave it
             // the next statement scan will go down to primary and mark it as
             // unrecognized then advance itself
-            ctx.pushError(.{ .expectedToken = .semicolon });
+            ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
         },
     }
 }
 
-fn blockRule(ctx: Context, astgen: *AST) StmtRange {
+fn blockRule(ctx: Context, astgen: *AST) !StmtRange {
     const tracyZone = ztracy.ZoneN(@src(), "parse block");
     defer tracyZone.End();
 
-    const defaultRange: StmtRange = .EMPTY;
-    _ = filterCurrentTokenOrErr(.leftBrace, ctx, .eof) catch return defaultRange;
+    // this should always be leftBrace since it's fed via the statement rule
+    _ = try filterCurrentToken(.leftBrace, ctx, .eof);
     advance(ctx);
 
-    const retInfo = blockBodyRule(ctx, astgen);
+    const retInfo = try blockBodyRule(ctx, astgen);
 
-    _ = filterCurrentTokenOrErr(.rightBrace, ctx, .eof) catch return retInfo;
+    _ = try filterCurrentToken(.rightBrace, ctx, .eof);
     advance(ctx);
     return retInfo;
 }
 
-fn blockBodyRule(ctx: Context, astgen: *AST) StmtRange {
+fn blockBodyRule(ctx: Context, astgen: *AST) !StmtRange {
     const tracyZone = ztracy.ZoneN(@src(), "parse block body");
     defer tracyZone.End();
 
     const stmtStart: u32 = @truncate(astgen.statementList.items.len);
 
-    while (peekOrInterrupt(ctx, .brace)) |t| {
-        const tk = t.token;
-        switch (tk.tokenType) {
-            .kwIf => ifRule(ctx, astgen) catch {},
-            .leftBrace => _ = blockRule(ctx, astgen),
-            else => statementRule(ctx, astgen) catch {
-                // interrupted by brace and returned early
-                // do NOT advance otherwise the brace will be skipped
-                //
-                // advancing on eof will still result in eof so it's fine
-                break;
-            },
-        }
+    stmts: while (peekOrInterrupt(ctx, .brace)) |_| {
+        declarationRule(ctx, astgen, .brace) catch |e| {
+            if (isInterruptAtExact(e, .eof)) {
+                return e;
+            } else {
+                // must be a brace interrupt because we specified brace level or above
+                // this means our body is done
+                break :stmts;
+            }
+        };
     } else |_| {}
     // when we are interrupted by either EOF or right brace
     const stmtEnd: u32 = @truncate(astgen.statementList.items.len);
-    _ = filterCurrentTokenOrErr(.rightBrace, ctx, .eof) catch {};
+    _ = filterCurrentToken(.rightBrace, ctx, .eof) catch {};
     return .{ .start = stmtStart, .end = stmtEnd };
 }
 
@@ -622,104 +637,121 @@ fn ifRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
     defer tracyZone.End();
 
-    _ = try filterCurrentTokenOrErr(.kwIf, ctx, .brace);
+    // should never error due to this being fed by statement rule
+    _ = try filterCurrentToken(.kwIf, ctx, .brace);
     advance(ctx);
 
-    _ = filterCurrentTokenOrErr(.leftParen, ctx, .semicolon) catch |e| {
-        switch (e) {
-            TokenFilterError.DoesNotMatch => {},
-            // if ( ;
-            // -----^ skip over this...
-            //
-            // if ( }
-            // -----^ don't skip over this...
-            else => |interrupt| if (!isInterruptAtOrAbove(interrupt, .brace)) {
-                advance(ctx);
-                return interrupt;
-            },
-        }
+    // if (
+    // ---^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
+    //      a semicolon here means we're cooked
+    _ = filterCurrentToken(.leftParen, ctx, .semicolon) catch |e| {
+        // we expected a conditional and got a break
+        ctx.pushError(.expectedExpression);
+        return e;
     };
     advance(ctx);
 
-    // use later
-    _ = expressionRule(ctx, astgen, .semicolon) catch |e| {
-        // if (expr ;
-        // -----^ skip over this...
-        //
-        // if (expr }
-        // -----^ don't skip over this...
-        if (!isInterruptAtOrAbove(e, .brace)) {
-            advance(ctx);
-        }
-    };
+    // if ( ...
+    // -----^^^ pos
+    // use the result later
 
-    _ = filterCurrentTokenOrErr(.rightParen, ctx, .semicolon) catch |e| {
-        switch (e) {
-            TokenFilterError.DoesNotMatch => {},
-            else => |interrupt| if (!isInterruptAtOrAbove(interrupt, .brace)) {
-                advance(ctx);
-            },
-        }
-    };
+    // if (expr ;
+    // ---------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
+    //            a semicolon here means we're cooked
+    // if ( expr )
+    //           ^ position will be left here assuming things go ok
+    _ = try expressionRule(ctx, astgen, .semicolon);
+
+    // if ( expr )
+    // ----------^
+    // we are forced to accept semicolon breaks for the same reason
+    _ = try filterCurrentToken(.rightParen, ctx, .semicolon);
     advance(ctx);
 
-    const body = try peekOrInterrupt(ctx, .semicolon);
-    switch (body.token.tokenType) {
-        .leftBrace => _ = blockRule(ctx, astgen),
-        else => try statementNoDeclRule(ctx, astgen),
+    // if ( expr ) body
+    // ------------^^^^
+    try statementRule(ctx, astgen, .semicolon);
+}
+
+/// Returns an interrupt on a semicolon.
+/// This needs either brace interrupt level or EOF level.
+fn statementRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
+    const tracyZone = ztracy.ZoneN(@src(), "parse statement");
+    defer tracyZone.End();
+    const firstToken = try peekOrInterrupt(ctx, .semicolon);
+
+    // again, i think this is the best way to express how the statement rule branches into 3 different other rules
+    switch (firstToken.token.tokenType) {
+        .leftBrace => _ = try blockRule(ctx, astgen),
+        .kwReturn => _ = try returnRule(ctx, astgen, interruptLevel),
+        .kwIf => _ = try ifRule(ctx, astgen),
+        else => _ = try expressionStatementRule(ctx, astgen, interruptLevel),
     }
 }
 
-fn baseStatementRule(ctx: Context, astgen: *AST, firstRule: fn (Context, *AST) ParseInterruptSignal!void, dbgName: [*:0]const u8) !void {
-    const tracyZone = ztracy.ZoneN(@src(), dbgName);
-    defer tracyZone.End();
-
-    firstRule(ctx, astgen) catch |e| {
-        if (isInterruptAtExact(e, .semicolon)) {
-            // expr ;
-            //      ^ position
+/// interruptLevel should be either brace or EOF.
+fn expressionStatementRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void {
+    _ = expressionRule(ctx, astgen, .semicolon) catch |interrupt| {
+        if (isInterruptAtOrAbove(interrupt, interruptLevel)) {
+            return interrupt;
+        } else if (isInterruptAtExact(interrupt, .semicolon)) {
             advance(ctx);
             return;
         } else {
-            // expr ( } | EOF )
-            _ = filterCurrentTokenOrErr(.semicolon, ctx, .brace) catch {};
+            // the only case where this might happen is a brace interrupt while this has EOF interrupt as of now
+            _ = try filterCurrentToken(.semicolon, ctx, interruptLevel);
+            advance(ctx);
+            return;
         }
     };
-
-    const semicolonMatchOrErr = filterCurrentTokenOrErr(.semicolon, ctx, .brace);
-    if (semicolonMatchOrErr) |_| {
-        advance(ctx);
-    } else |err| {
-        switch (err) {
-            TokenFilterError.DoesNotMatch => {},
-            else => return err,
-        }
-    }
-}
-/// Returns an interrupt on a brace/EOF.
-fn statementRule(ctx: Context, astgen: *AST) !void {
-    // TODO: fix this too;
-    try baseStatementRule(ctx, astgen, variableDeclarationRule, "parse statement");
+    _ = filterCurrentToken(.semicolon, ctx, interruptLevel) catch {};
 }
 
-/// Returns an interrupt on a brace/EOF. No declarations allowed.
-fn statementNoDeclRule(ctx: Context, astgen: *AST) !void {
-    try baseStatementRule(ctx, astgen, assignmentRule, "parse statement (no declaration)");
-}
-
-fn returnRule(ctx: Context, astgen: *AST) !void {
+/// The grammar expects this to process its own semicolon.
+/// Similar to expr statements, this can either be interrupted by braces or eof, so this accepts that parameter.
+fn returnRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void {
     const tracyZone = ztracy.ZoneN(@src(), "try parse return or fallthrough");
     defer tracyZone.End();
 
-    const ret = try peekOrInterrupt(ctx, .semicolon);
+    const ret = try peekOrInterrupt(ctx, interruptLevel);
     if (ret.token.tokenType != .kwReturn) {
-        _ = try expressionRule(ctx, astgen, .semicolon);
-        return;
+        // should never happen because this is fed by the statement rule
+        unreachable;
     }
+
+    // return (...)
+    // -------^^^^^ pos after this advance call
     advance(ctx);
+
+    // There are 4 typical cases that arise from this.
+    // 1. return (expr) ; - Note that we don't care whether expr is valid for parsing purposes.
+    // 2. return ;
+    // 3. return (expr) EOF - The following two cases are syntax errors.
+    // 4. return EOF
+
     if (peekOrInterrupt(ctx, .semicolon)) |_| {
-        _ = astgen.newStatement(.{ .funReturn = try expressionRule(ctx, astgen, .semicolon) });
-    } else |_| {}
+        const val = expressionRule(ctx, astgen, .semicolon) catch |e| {
+            if (isInterruptAtExact(e, .semicolon)) {
+                // basically the same case 1, this rule doesn't care if the expression is malformed or not
+                return;
+            }
+            // case 3
+            _ = filterCurrentToken(.semicolon, ctx, interruptLevel) catch {};
+            return e;
+        };
+
+        _ = astgen.newStatement(.{ .funReturn = val });
+        // return (expr) ; <- case 1
+        _ = try filterCurrentToken(.semicolon, ctx, interruptLevel);
+    } else |e| {
+        if (isInterruptAtExact(e, .semicolon)) {
+            // case 2
+            return;
+        }
+        // case 4
+        _ = filterCurrentToken(.semicolon, ctx, interruptLevel) catch {};
+        return e;
+    }
 }
 
 fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!ExprHandle {
@@ -733,7 +765,7 @@ fn expressionRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) Pa
     return try assignmentRule(ctx, astgen, interruptLevel);
 }
 
-fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void {
+fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
     defer tracyZone.End();
 
@@ -741,7 +773,8 @@ fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !v
 
     const name = try peekOrInterrupt(ctx, interruptLevel);
     if (name.token.tokenType != .identifier) {
-        return try orRule(ctx, astgen);
+        // assignment = (... | logic_or)
+        return try orRule(ctx, astgen, interruptLevel);
     }
 
     advance(ctx);
@@ -749,7 +782,7 @@ fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !v
     const eq = try peekOrInterrupt(ctx, interruptLevel);
     if (eq.token.tokenType != .equal) {
         ctx.tokenIterator.* = prevPosition;
-        return try orRule(ctx, astgen);
+        return try orRule(ctx, astgen, interruptLevel);
     }
 
     advance(ctx);
@@ -761,6 +794,9 @@ fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !v
             .val = val,
         },
     });
+
+    // Per the langauge spec in chapter 8.4.2, an assignment expression returns the newly assigned value.
+    return val;
 }
 
 // might be the most atrocious function body i've ever written
@@ -916,7 +952,7 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
                         advance(ctx);
                         return NULL_HANDLE;
                     }
-                    _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch return NULL_HANDLE;
+                    _ = filterCurrentToken(.rightParen, ctx, interruptLevel) catch return NULL_HANDLE;
                     return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
                 };
                 switch (continuation.token.tokenType) {
@@ -928,7 +964,7 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
                     // the start of the next argument (we assume they forgot the comma).
                     else => {
                         // hacky but it works
-                        _ = filterCurrentTokenOrErr(.comma, ctx, interruptLevel) catch {};
+                        _ = filterCurrentToken(.comma, ctx, interruptLevel) catch {};
                     },
                 }
             } else |_| {}
@@ -942,11 +978,11 @@ fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptLevel: Interr
             if (t.token.tokenType == .rightParen) {
                 return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
             } else {
-                _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch {};
+                _ = filterCurrentToken(.rightParen, ctx, interruptLevel) catch {};
                 return NULL_HANDLE;
             }
         } else |_| {
-            _ = filterCurrentTokenOrErr(.rightParen, ctx, interruptLevel) catch {};
+            _ = filterCurrentToken(.rightParen, ctx, interruptLevel) catch {};
             return NULL_HANDLE;
         }
     } else if (startParen.token.tokenType == .equal) {
