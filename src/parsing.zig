@@ -483,8 +483,9 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 
 /// Variable declarations are now allowed in the top level, so this takes an interrupt level arg
 /// since it can be both brace interrupted (block) and eof interrupted (top-level).
+/// This needs to process its own semicolon.
 fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse declaration or fallthrough");
+    const tracyZone = ztracy.ZoneN(@src(), "try parse variable declaration");
     defer tracyZone.End();
 
     const iter = ctx.tokenIterator;
@@ -547,15 +548,9 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptLevel: Interrupt
                         advance(ctx);
                         break :val try expressionRule(ctx, astgen, interruptLevel);
                     },
-                    // var foo : typeToken;
-                    // -------------------^
-                    .semicolon => {
-                        break :val astgen.newExpression(.{ .literal = .nil });
-                    },
-                    // var foo : typeToken .
-                    // --------------------^
+                    // var foo : typeToken ;
+                    // --------------------^ in the event this is not a semicolon it will be caught
                     else => {
-                        ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
                         break :val astgen.newExpression(.{ .literal = .nil });
                     },
                 }
@@ -593,10 +588,14 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptLevel: Interrupt
             ctx.pushError(.{ .expectedToken = .{ .expected = .semicolon } });
         },
     }
+
+    // var foo (...) ; <-- if this isn't a semicolon, we're still at the end of the line
+    _ = try filterCurrentToken(.semicolon, ctx, interruptLevel);
+    advance(ctx);
 }
 
 fn blockRule(ctx: Context, astgen: *AST) !StmtRange {
-    const tracyZone = ztracy.ZoneN(@src(), "parse block");
+    const tracyZone = ztracy.ZoneN(@src(), "parse code block");
     defer tracyZone.End();
 
     // this should always be leftBrace since it's fed via the statement rule
@@ -611,9 +610,6 @@ fn blockRule(ctx: Context, astgen: *AST) !StmtRange {
 }
 
 fn blockBodyRule(ctx: Context, astgen: *AST) !StmtRange {
-    const tracyZone = ztracy.ZoneN(@src(), "parse block body");
-    defer tracyZone.End();
-
     const stmtStart: u32 = @truncate(astgen.statementList.items.len);
 
     stmts: while (peekOrInterrupt(ctx, .brace)) |_| {
@@ -704,13 +700,13 @@ fn expressionStatementRule(ctx: Context, astgen: *AST, interruptLevel: Interrupt
             return;
         }
     };
-    _ = filterCurrentToken(.semicolon, ctx, interruptLevel) catch {};
+    _ = try filterCurrentToken(.semicolon, ctx, interruptLevel);
 }
 
 /// The grammar expects this to process its own semicolon.
 /// Similar to expr statements, this can either be interrupted by braces or eof, so this accepts that parameter.
 fn returnRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void {
-    const tracyZone = ztracy.ZoneN(@src(), "try parse return or fallthrough");
+    const tracyZone = ztracy.ZoneN(@src(), "try parse return");
     defer tracyZone.End();
 
     const ret = try peekOrInterrupt(ctx, interruptLevel);
