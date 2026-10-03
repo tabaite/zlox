@@ -629,6 +629,47 @@ fn blockBodyRule(ctx: Context, astgen: *AST) !StmtRange {
     return .{ .start = stmtStart, .end = stmtEnd };
 }
 
+fn whileRule(ctx: Context, astgen: *AST) !void {
+    const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
+    defer tracyZone.End();
+
+    // should never error due to this being fed by statement rule
+    _ = try filterCurrentToken(.kwWhile, ctx, .brace);
+    advance(ctx);
+
+    // while (
+    // ------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
+    //      a semicolon here means we're cooked
+    _ = filterCurrentToken(.leftParen, ctx, .semicolon) catch |e| {
+        // we expected a conditional and got a break
+        ctx.pushError(.expectedExpression);
+        return e;
+    };
+    advance(ctx);
+
+    // while ( ...
+    // --------^^^ pos
+    // use the result later
+
+    // while ( expr ;
+    // -------------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
+    //                a semicolon here means we're cooked
+    // while ( expr )
+    //              ^ position will be left here assuming things go ok
+    _ = try expressionRule(ctx, astgen, .semicolon);
+
+    // while ( expr )
+    // -------------^
+    // we are forced to accept semicolon breaks for the same reason
+    _ = try filterCurrentToken(.rightParen, ctx, .semicolon);
+    advance(ctx);
+
+    // while ( expr ) body
+    // ---------------^^^^
+    // this uses the brace interrupt level as statements can accept semicolons
+    try statementRule(ctx, astgen, .brace);
+}
+
 fn ifRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
     defer tracyZone.End();
@@ -697,6 +738,7 @@ fn statementRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) Par
     switch (firstToken.token.tokenType) {
         .leftBrace => _ = try blockRule(ctx, astgen),
         .kwReturn => _ = try returnRule(ctx, astgen, interruptLevel),
+        .kwWhile => _ = try whileRule(ctx, astgen),
         .kwIf => _ = try ifRule(ctx, astgen),
         else => _ = try expressionStatementRule(ctx, astgen, interruptLevel),
     }
