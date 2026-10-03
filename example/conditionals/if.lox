@@ -5,5 +5,7 @@ fun main() {
 
 	if (b) {
 		var x = 15;
+	} else {
+		var x = 67;
 	}
 }

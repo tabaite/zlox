@@ -651,8 +651,8 @@ fn ifRule(ctx: Context, astgen: *AST) !void {
     // -----^^^ pos
     // use the result later
 
-    // if (expr ;
-    // ---------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
+    // if ( expr ;
+    // ----------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
     //            a semicolon here means we're cooked
     // if ( expr )
     //           ^ position will be left here assuming things go ok
@@ -666,10 +666,27 @@ fn ifRule(ctx: Context, astgen: *AST) !void {
 
     // if ( expr ) body
     // ------------^^^^
-    try statementRule(ctx, astgen, .semicolon);
+    // this uses the brace interrupt level as statements can accept semicolons
+    try statementRule(ctx, astgen, .brace);
+
+    // if ( expr ) body else?
+    // -----------------^^^
+    // this is the bridge to an optional part, so we shouldn't be returning interrupts (it should be treated as the next line)
+    const possibleElse = peekOrInterrupt(ctx, .semicolon) catch return;
+    if (possibleElse.token.tokenType != .kwElse) {
+        // an example of when this might happen:
+        // if ( expr ) foo(); bar();
+        // -------------------^^^ where the cursor would be
+        return;
+    }
+
+    // if ( expr ) ... else ...
+    // ---------------------^^^
+    advance(ctx);
+    // this uses the brace interrupt level as statements can accept semicolons
+    try statementRule(ctx, astgen, .brace);
 }
 
-/// Returns an interrupt on a semicolon.
 /// This needs either brace interrupt level or EOF level.
 fn statementRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) ParseInterruptSignal!void {
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
@@ -700,7 +717,13 @@ fn expressionStatementRule(ctx: Context, astgen: *AST, interruptLevel: Interrupt
             return;
         }
     };
-    _ = try filterCurrentToken(.semicolon, ctx, interruptLevel);
+
+    const sc = try filterCurrentToken(.semicolon, ctx, interruptLevel);
+    // if a semicolon ends the line, eg (1 + 2);, then advance as is the positional contract
+    // else, eg (1 + 2)a, assume a missing semicolon and that this token is the start of the next line
+    if (sc.tokenType == .semicolon) {
+        advance(ctx);
+    }
 }
 
 /// The grammar expects this to process its own semicolon.
@@ -729,6 +752,7 @@ fn returnRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void 
         const val = expressionRule(ctx, astgen, .semicolon) catch |e| {
             if (isInterruptAtExact(e, .semicolon)) {
                 // basically the same case 1, this rule doesn't care if the expression is malformed or not
+                advance(ctx);
                 return;
             }
             // case 3
@@ -742,6 +766,7 @@ fn returnRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !void 
     } else |e| {
         if (isInterruptAtExact(e, .semicolon)) {
             // case 2
+            advance(ctx);
             return;
         }
         // case 4
@@ -765,8 +790,11 @@ fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !E
     const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
     defer tracyZone.End();
 
+    // this is hacky but whatever!!
     const prevPosition = ctx.tokenIterator.*;
 
+    // foo = ...
+    // ^^^----
     const name = try peekOrInterrupt(ctx, interruptLevel);
     if (name.token.tokenType != .identifier) {
         // assignment = (... | logic_or)
@@ -775,14 +803,20 @@ fn assignmentRule(ctx: Context, astgen: *AST, interruptLevel: InterruptLevel) !E
 
     advance(ctx);
 
+    // foo = ...
+    // ----^
     const eq = try peekOrInterrupt(ctx, interruptLevel);
     if (eq.token.tokenType != .equal) {
+        // foo ...
+        // ----^^^ we need to return things to how they were before we fallthrough to the next rule
         ctx.tokenIterator.* = prevPosition;
         return try orRule(ctx, astgen, interruptLevel);
     }
 
     advance(ctx);
 
+    // foo = ...
+    // ------^^^
     const val = try expressionRule(ctx, astgen, interruptLevel);
     _ = astgen.newStatement(.{
         .assignment = .{
