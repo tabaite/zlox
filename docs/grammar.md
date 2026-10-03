@@ -5,15 +5,15 @@
 program        → ( function )\* EOF
 declaration    → ( funDecl | varDecl | statement )
 funDecl        → "fun" IDENTIFIER "(" ( (IDENTIFIER ":" type ",")\* (IDENTIFIER ":" type) )? ")" ( type )? block
-varDecl      * → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
+varDecl        → "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";"
 arg            → IDENTIFIER ":" type; malformed: IDENTIFIER
-statement    * → ( return | expression | block )
-block        * → "{" ( declaration )\* "}"
-exprStmt     * → expression ";"
-return       * → "return" expression ";"
+statement      → ( return | expression | block )
+block          → "{" ( declaration )\* "}"
+exprStmt       → expression ";"
+return         → "return" expression ";"
 if           * → "if" "(" expression ")" statement ( "else" statement )
-expression   * → assignment
-assignment   * → IDENTIFIER "=" expression | or
+expression     → assignment
+assignment     → IDENTIFIER "=" expression | or
 or             → and ( "or" and )\*
 and            → equality ( "and" equality )\*
 equality       → comparison ( ( "!=" | "==" ) comparison )\*
