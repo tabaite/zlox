@@ -118,6 +118,7 @@ const ParseInterruptSignal = error{
     ReachedBrace,
     ReachedEOF,
 };
+
 /// Interrupt levels define the scope of interrupts.
 /// Each level is a superset of the previous, so
 /// a Parenthesis interrupt level can also invoke a
@@ -159,6 +160,75 @@ const InterruptLevel = enum(u32) {
 
     pub fn asInt(self: InterruptLevel) u32 {
         return @intFromEnum(self);
+    }
+};
+
+/// We don't need the space savings of a packed struct.
+/// Interrupt levels define the scope of interrupts.
+/// Each level is a superset of the previous, so
+/// a Parenthesis interrupt level can also invoke a
+/// Semicolon interrupt, and so on, so forth.
+const InterruptLevelSet = struct {
+    paren: bool,
+    semi: bool,
+    brace: bool,
+    eof: bool,
+
+    fn getHash(a: []const u8) u64 {
+        var accum = std.hash.XxHash64.init(6767);
+        accum.update(a);
+        return accum.final();
+    }
+
+    pub fn init(comptime data: anytype) InterruptLevelSet {
+        const s: InterruptLevelSet = comptime set: {
+            const DataType = @TypeOf(data);
+            const dtInfo = @typeInfo(DataType);
+
+            if (dtInfo != .@"struct") {
+                @compileError("Expected data in InterruptLevelSet to be a tuple (struct)");
+            }
+            const info = dtInfo.@"struct";
+
+            var parenIn = false;
+            var semiIn = false;
+            var braceIn = false;
+            var eofIn = false;
+
+            for (info.fields) |field| {
+                const val = field.defaultValue() orelse @compileError("no value in tuple???A");
+                if (@TypeOf(val) != @EnumLiteral()) {
+                    const tName = @typeName(@TypeOf(val));
+                    @compileError("expected enum literal type for interrupt levels (sugar stuff), found " ++ tName);
+                }
+
+                const tag = @tagName(val);
+
+                const parenH = getHash("parenthesis");
+                const semiH = getHash("semicolon");
+                const braceH = getHash("brace");
+                const eofH = getHash("eof");
+                switch (getHash(tag)) {
+                    parenH => parenIn = true,
+                    semiH => semiIn = true,
+                    braceH => braceIn = true,
+                    eofH => eofIn = true,
+                    else => @compileError("Expected 'parenthesis', 'semicolon', 'brace', or 'eof' for tuple val, found "),
+                }
+            }
+
+            break :set .{ .paren = parenIn, .semi = semiIn, .brace = braceIn, .eof = eofIn };
+        };
+        return s;
+    }
+
+    pub fn setUnion(a: InterruptLevelSet, b: InterruptLevelSet) InterruptLevelSet {
+        return .{
+            .paren = a.paren or b.paren,
+            .semi = a.semi or b.semi,
+            .brace = a.brace or b.brace,
+            .eof = a.eof or b.eof,
+        };
     }
 };
 
