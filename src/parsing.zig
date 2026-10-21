@@ -230,6 +230,16 @@ const InterruptLevelSet = struct {
             .eof = a.eof or b.eof,
         };
     }
+
+    pub fn in(this: InterruptLevelSet, interrupt: ParseInterruptSignal) bool {
+        const P = ParseInterruptSignal;
+        return switch (interrupt) {
+            P.ReachedParen => this.paren,
+            P.ReachedSemi => this.semi,
+            P.ReachedBrace => this.brace,
+            P.ReachedEOF => this.eof,
+        };
+    }
 };
 
 fn isInterruptAtExact(sig: ParseInterruptSignal, target: InterruptLevel) bool {
