@@ -22,7 +22,7 @@ status legend:
 | ⚠️ | ⚠️ | function     | IDENTIFIER "(" parameters? ")" ( type )? block | see funDecl. also return type is not vanilla |
 | ⚠️ | ⬛ | parameters   | IDENTIFIER ":" type ("," IDENTIFIER ":" type)\* | types are really weird, they have not been updated to be optional (for language compliance) yet. |
 | ✅ | ✅ | varDecl      | "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";" | |
-| ⚠️ | ⬛ | statement    | ( return \| expression \| block \| ifStmt \| whileStmt \| forStmt ) | |
+| ⚠️ | ⬛ | statement    | ( return \| exprStmt \| block \| ifStmt \| whileStmt \| forStmt ) | |
 | ✅ | ⬛ | block        | "{" ( declaration )\* "}" | |
 | ✅ | ⬛ | exprStmt     | expression ";" | |
 | ❌ | ❌ | forStmt      | "for" "(" ( varDecl \| exprStmt \| ";" ) expression? ";" expression? ")" statement | |
