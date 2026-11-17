@@ -59,6 +59,14 @@ pub const Error = union(enum) {
     /// --------------^ expected type, found SLASH
     expectedTypeToken,
 
+    /// Specifically for when we expect a statement
+    /// but don't have one.
+    /// Example:
+    /// var foo = 1;
+    /// ;
+    /// ^--- expected statement
+    expectedStatement,
+
     /// A specialized version of expectedToken
     /// for type annotations (which are multiple tokens)
     /// The "found" attribute is not really relevant since
@@ -169,6 +177,7 @@ pub const ErrorTrace = struct {
             },
             .expectedTypeAnnotation => _ = try out.write("expected a type annotation"),
             .expectedExpression => _ = try out.write("expected a valid expression"),
+            .expectedStatement => _ = try out.write("expected some valid statement"),
             .argLimitExceeded => _ = try out.write("argument limit for functions exceeded"),
             .argumentTypeCannotBeVoid => _ = try out.write("arguments must not be type 'void'"),
 

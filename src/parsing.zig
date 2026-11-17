@@ -6,9 +6,20 @@ const context = @import("context.zig");
 const ztracy = @import("ztracy");
 
 // UNLESS DIRECTLY STATED OTHERWISE
-// The positional contract each rule follows is:
+// PR 1: The positional contract each rule follows is:
 // - If completed "successfully", the cursor lies on the token immediately after the rule.
 // - If interrupted by a token, the cursor lies on the offending token.
+//
+// PR 2: Braces and parenthesis are consumed eagerly by the current rule.
+// Example:
+// Consider the program:
+// fun foo(x) {
+//     if (x) {
+//         bar();
+// }
+//
+// The function foo() rule will complain about not having an ending brace, because the one at the end will be taken
+// by the if() rule. This is to match behaviour in other programming languages like C.
 //
 // A rule is "interrupted" if it encounters certain tokens which are associated with the end of big rules.
 // - A right parenthesis for the end of function arguments
@@ -35,6 +46,8 @@ const ztracy = @import("ztracy");
 
 const NULL_HANDLE = ast.NULL_HANDLE;
 const MAX_ARGS = ast.MAX_ARGS;
+
+const assert = std.debug.assert;
 
 const Token = scanning.Token;
 const TokenContext = scanning.TokenContext;
@@ -189,6 +202,10 @@ const InterruptLevelSet = struct {
         };
     }
 
+    pub fn setEq(a: InterruptLevelSet, b: InterruptLevelSet) bool {
+        return (a.paren == b.paren) or (a.semi == b.semi) or (a.brace == b.brace) or (a.eof == b.eof);
+    }
+
     pub fn init(comptime data: anytype) InterruptLevelSet {
         const s: InterruptLevelSet = comptime set: {
             const DataType = @TypeOf(data);
@@ -240,7 +257,16 @@ const InterruptLevelSet = struct {
         };
     }
 
-    pub fn in(this: InterruptLevelSet, interrupt: ParseInterruptSignal) bool {
+    pub fn setIntersection(a: InterruptLevelSet, b: InterruptLevelSet) InterruptLevelSet {
+        return .{
+            .paren = a.paren and b.paren,
+            .semi = a.semi and b.semi,
+            .brace = a.brace and b.brace,
+            .eof = a.eof and b.eof,
+        };
+    }
+
+    pub fn contains(this: InterruptLevelSet, interrupt: ParseInterruptSignal) bool {
         const P = ParseInterruptSignal;
         return switch (interrupt) {
             P.ReachedParen => this.paren,
@@ -251,7 +277,7 @@ const InterruptLevelSet = struct {
     }
 };
 
-fn isInterruptAtExact(sig: ParseInterruptSignal, target: InterruptLevelSet) bool {
+fn isInterruptAtExact(sig: ParseInterruptSignal, target: InterruptLevel) bool {
     const PIS = ParseInterruptSignal;
     const sigLevel: InterruptLevel = switch (sig) {
         PIS.ReachedParen => .parenthesis,
@@ -275,6 +301,7 @@ inline fn matchTokenToExprOrNull(target: scanning.TokenType, comptime matches: [
     return null;
 }
 
+// TODO: fix this to align with maximal munch (SEMI LEVEL WITH SEMI QUEUED IS AN INTERRUPT WHEN IT SHOULDN'T BE)
 inline fn peekOrInterrupt(ctx: Context, interruptSet: InterruptLevelSet) ParseInterruptSignal!TokenContext {
     const tracyZone = ztracy.ZoneN(@src(), "peek token stream or interrupt");
     defer tracyZone.End();
@@ -287,6 +314,7 @@ inline fn peekOrInterrupt(ctx: Context, interruptSet: InterruptLevelSet) ParseIn
         .semicolon => .{ interruptSet.semi, ParseInterruptSignal.ReachedSemicolon },
         .rightBrace => .{ interruptSet.brace, ParseInterruptSignal.ReachedBrace },
         .eof => .{ interruptSet.eof, ParseInterruptSignal.ReachedEOF },
+        else => .{ false, ParseInterruptSignal.ReachedEOF },
     };
 
     return if (shouldInterrupt) interrupt else tokenContext;
@@ -299,8 +327,6 @@ inline fn advance(ctx: Context) void {
 const TokenFilterError = error{
     DoesNotMatch,
 };
-
-const INTERRUPT_SET_ONLY_EOF = InterruptLevelSet.init(.{.eof});
 
 /// Tries to "filter" a token through a match. If no match log the error silently and return the token as usual.
 /// This is a helper function to replace the if (t.tokenType != ...) in most cases. Sometimes when different paths are
@@ -331,8 +357,10 @@ pub fn parseAndCompileAll(ctx: Context, astgen: *AST) void {
     const parseZone = ztracy.ZoneN(@src(), "parse + compile");
     defer parseZone.End();
 
-    while (peekOrInterrupt(ctx, .eof)) |_| {
-        declarationRule(ctx, astgen, .eof) catch break;
+    const eof = InterruptLevelSet.init(.{.eof});
+
+    while (peekOrInterrupt(ctx, eof)) |_| {
+        declarationRule(ctx, astgen, eof) catch break;
     } else |_| {}
 }
 
@@ -340,7 +368,9 @@ pub fn parseAndCompileAll(ctx: Context, astgen: *AST) void {
 /// but it dynamically chooses a function to run based on the next token that WILL.
 /// It should follow the contract of leaving
 fn declarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) ParseInterruptSignal!void {
-    const first = try peekOrInterrupt(ctx, INTERRUPT_SET_ONLY_EOF);
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
+    const first = try peekOrInterrupt(ctx, .init(.{.eof}));
 
     // isn't this a bad idea? the answer is i think it is better to have this hacky approach centralized in
     // the declaration rule (kinda like in the lang spec) than have it unpredictably handled in the function declaration rule
@@ -361,6 +391,9 @@ fn declarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) 
 /// a) there's no rule where a function declaration is inside parenthesis
 /// b) function declarations aren't in any statement rules either so semicolons never apply
 fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
+    // as explained in doc comment, braces are consumed by the calling rule, so it doesn't interrupt this
+    const irptSet = InterruptLevelSet.init(.{.eof});
+
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
 
@@ -368,12 +401,12 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 
     // fun foo ...
     // ^^^-^^^- first two
-    _ = try filterCurrentToken(.kwFun, ctx, .eof);
+    _ = try filterCurrentToken(.kwFun, ctx, irptSet);
     advance(ctx);
-    const funName = try filterCurrentToken(.identifier, ctx, .eof);
+    const funName = try filterCurrentToken(.identifier, ctx, irptSet);
     advance(ctx);
 
-    _ = try filterCurrentToken(.leftParen, ctx, .eof);
+    _ = try filterCurrentToken(.leftParen, ctx, irptSet);
     advance(ctx);
 
     var args: [MAX_ARGS][]u8 = undefined;
@@ -382,16 +415,16 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
     // if EOF, main ( EOF,
     // skip parsing arguments
     // should be fine to implement this hack
-    const argStart = try peekOrInterrupt(ctx, .eof);
+    const argStart = try peekOrInterrupt(ctx, irptSet);
     // fun foo ( ...
     // --------^
-    if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, .eof)) |_| {
-        const argName = try filterCurrentToken(.identifier, ctx, .eof);
+    if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, irptSet)) |_| {
+        const argName = try filterCurrentToken(.identifier, ctx, irptSet);
         // fun foo ( name ...
         // ----------^^^^
 
         advance(ctx);
-        const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, .eof);
+        const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, irptSet);
         if (typeDesignatorOrInterrupt) |typeDesignatorCtx| {
             const typeDesignator = typeDesignatorCtx.token;
             switch (typeDesignator.tokenType) {
@@ -407,7 +440,7 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
                     // fun foo ( name : number ...
                     // ---------------^ (spaces for dramatic effect)
                     advance(ctx);
-                    const argTypeOrInterrupt = peekOrInterrupt(ctx, .eof);
+                    const argTypeOrInterrupt = peekOrInterrupt(ctx, irptSet);
                     if (argTypeOrInterrupt) |argType| {
                         // fun foo ( name : <argType> ...
                         // ------------------^^^^^^^ yeah
@@ -451,14 +484,13 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
             // fun foo ( name EOF
         }
 
-        const continuationOrInterrupt = peekOrInterrupt(ctx, .eof);
+        const continuationOrInterrupt = peekOrInterrupt(ctx, irptSet);
         if (continuationOrInterrupt) |continuation| {
             switch (continuation.token.tokenType) {
                 .rightParen => {
                     // fun foo ( name )
                     // ---------------^
                     if (argCount == MAX_ARGS - 1) {
-                        // TODO: rework this so that we continue parsing, but not recording arguments after the limit is reached.
                         ctx.pushError(.argLimitExceeded);
                         break;
                     } else {
@@ -493,12 +525,12 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 
     // fun foo ( name, ..., nameN )
     // ---------------------------^ we need this end here
-    _ = try filterCurrentToken(.rightParen, ctx, .eof);
+    _ = try filterCurrentToken(.rightParen, ctx, irptSet);
     advance(ctx);
 
     // fun foo ( name ) returnType ...
     // -----------------^^^^^^^^^^
-    const returnTypeTokenOrNull = peekOrInterrupt(ctx, .eof) catch |e| {
+    const returnTypeTokenOrNull = peekOrInterrupt(ctx, irptSet) catch |e| {
         ctx.pushError(.expectedTypeToken);
         return e;
     };
@@ -527,6 +559,8 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 /// since it can be both brace interrupted (block) and eof interrupted (top-level).
 /// This needs to process its own semicolon.
 fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) ParseInterruptSignal!void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
     const tracyZone = ztracy.ZoneN(@src(), "try parse variable declaration");
     defer tracyZone.End();
 
@@ -636,26 +670,23 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLe
     advance(ctx);
 }
 
+/// This function only takes EOF and/or brace interrupts, and it eagerly consumes any brace
+/// as its own. Therefore, this actually doesn't need a interruptSet argument.
 fn blockRule(ctx: Context, astgen: *AST) !StmtRange {
+    const irptSet = InterruptLevelSet.init(.{.eof});
+    const innerIrptSet = InterruptLevelSet.init(.{ .eof, .brace });
     const tracyZone = ztracy.ZoneN(@src(), "parse code block");
     defer tracyZone.End();
 
     // this should always be leftBrace since it's fed via the statement rule
-    _ = try filterCurrentToken(.leftBrace, ctx, .eof);
+    _ = try filterCurrentToken(.leftBrace, ctx, irptSet);
     advance(ctx);
 
-    const retInfo = try blockBodyRule(ctx, astgen);
-
-    _ = try filterCurrentToken(.rightBrace, ctx, .eof);
-    advance(ctx);
-    return retInfo;
-}
-
-fn blockBodyRule(ctx: Context, astgen: *AST) !StmtRange {
+    // block body
     const stmtStart: u32 = @truncate(astgen.statementList.items.len);
 
-    stmts: while (peekOrInterrupt(ctx, .brace)) |_| {
-        declarationRule(ctx, astgen, .brace) catch |e| {
+    stmts: while (peekOrInterrupt(ctx, innerIrptSet)) |_| {
+        declarationRule(ctx, astgen, innerIrptSet) catch |e| {
             if (isInterruptAtExact(e, .eof)) {
                 return e;
             } else {
@@ -665,24 +696,35 @@ fn blockBodyRule(ctx: Context, astgen: *AST) !StmtRange {
             }
         };
     } else |_| {}
+
     // when we are interrupted by either EOF or right brace
     const stmtEnd: u32 = @truncate(astgen.statementList.items.len);
-    _ = filterCurrentToken(.rightBrace, ctx, .eof) catch {};
-    return .{ .start = stmtStart, .end = stmtEnd };
+    _ = filterCurrentToken(.rightBrace, ctx, irptSet) catch {};
+    const retInfo = StmtRange{ .start = stmtStart, .end = stmtEnd };
+
+    _ = try filterCurrentToken(.rightBrace, ctx, irptSet);
+    advance(ctx);
+    return retInfo;
 }
 
-fn whileRule(ctx: Context, astgen: *AST) !void {
+/// the only case where a brace should interrupt this is "while }", but this must be accounted for nonetheless.
+fn whileRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
+    const innerSemiInterrupt = interruptSet.setUnion(.init(.{.semicolon}));
+
+    // TODO: fix interrupt levels
     const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
     defer tracyZone.End();
 
     // should never error due to this being fed by statement rule
-    _ = try filterCurrentToken(.kwWhile, ctx, .brace);
+    _ = try filterCurrentToken(.kwWhile, ctx, interruptSet);
     advance(ctx);
 
     // while (
     // ------^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
     //      a semicolon here means we're cooked
-    _ = filterCurrentToken(.leftParen, ctx, .semicolon) catch |e| {
+    _ = filterCurrentToken(.leftParen, ctx, innerSemiInterrupt) catch |e| {
         // we expected a conditional and got a break
         ctx.pushError(.expectedExpression);
         return e;
@@ -698,32 +740,37 @@ fn whileRule(ctx: Context, astgen: *AST) !void {
     //                a semicolon here means we're cooked
     // while ( expr )
     //              ^ position will be left here assuming things go ok
-    _ = try expressionRule(ctx, astgen, .semicolon);
+    _ = try expressionRule(ctx, astgen, innerSemiInterrupt);
 
     // while ( expr )
     // -------------^
     // we are forced to accept semicolon breaks for the same reason
-    _ = try filterCurrentToken(.rightParen, ctx, .semicolon);
+    _ = try filterCurrentToken(.rightParen, ctx, innerSemiInterrupt);
     advance(ctx);
 
     // while ( expr ) body
     // ---------------^^^^
     // this uses the brace interrupt level as statements can accept semicolons
-    try statementRule(ctx, astgen, .brace);
+    try statementRule(ctx, astgen, interruptSet.setUnion(.init(.{.brace})));
 }
 
-fn ifRule(ctx: Context, astgen: *AST) !void {
+/// the only case where a brace should interrupt this is "if }", but this must be accounted for nonetheless.
+fn ifRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
+    const innerSemiInterrupt = interruptSet.setUnion(.init(.{.semicolon}));
+
     const tracyZone = ztracy.ZoneN(@src(), "parse if statement");
     defer tracyZone.End();
 
     // should never error due to this being fed by statement rule
-    _ = try filterCurrentToken(.kwIf, ctx, .brace);
+    _ = try filterCurrentToken(.kwIf, ctx, interruptSet);
     advance(ctx);
 
     // if (
     // ---^ because if statements have a statement body (i.e. if (foo) return bar; is valid),
     //      a semicolon here means we're cooked
-    _ = filterCurrentToken(.leftParen, ctx, .semicolon) catch |e| {
+    _ = filterCurrentToken(.leftParen, ctx, innerSemiInterrupt) catch |e| {
         // we expected a conditional and got a break
         ctx.pushError(.expectedExpression);
         return e;
@@ -739,23 +786,23 @@ fn ifRule(ctx: Context, astgen: *AST) !void {
     //            a semicolon here means we're cooked
     // if ( expr )
     //           ^ position will be left here assuming things go ok
-    _ = try expressionRule(ctx, astgen, .semicolon);
+    _ = try expressionRule(ctx, astgen, innerSemiInterrupt);
 
     // if ( expr )
     // ----------^
     // we are forced to accept semicolon breaks for the same reason
-    _ = try filterCurrentToken(.rightParen, ctx, .semicolon);
+    _ = try filterCurrentToken(.rightParen, ctx, innerSemiInterrupt);
     advance(ctx);
 
     // if ( expr ) body
     // ------------^^^^
     // this uses the brace interrupt level as statements can accept semicolons
-    try statementRule(ctx, astgen, .brace);
+    try statementRule(ctx, astgen, interruptSet);
 
     // if ( expr ) body else?
     // -----------------^^^
     // this is the bridge to an optional part, so we shouldn't be returning interrupts (it should be treated as the next line)
-    const possibleElse = peekOrInterrupt(ctx, .semicolon) catch return;
+    const possibleElse = peekOrInterrupt(ctx, innerSemiInterrupt) catch return;
     if (possibleElse.token.tokenType != .kwElse) {
         // an example of when this might happen:
         // if ( expr ) foo(); bar();
@@ -767,40 +814,37 @@ fn ifRule(ctx: Context, astgen: *AST) !void {
     // ---------------------^^^
     advance(ctx);
     // this uses the brace interrupt level as statements can accept semicolons
-    try statementRule(ctx, astgen, .brace);
+    try statementRule(ctx, astgen, interruptSet);
 }
 
 /// This needs either brace interrupt level or EOF level.
 fn statementRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) ParseInterruptSignal!void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
     const tracyZone = ztracy.ZoneN(@src(), "parse statement");
     defer tracyZone.End();
-    const firstToken = try peekOrInterrupt(ctx, .semicolon);
+    const firstToken = try peekOrInterrupt(ctx, interruptSet);
 
     // again, i think this is the best way to express how the statement rule branches into 3 different other rules
     switch (firstToken.token.tokenType) {
         .leftBrace => _ = try blockRule(ctx, astgen),
         .kwReturn => _ = try returnRule(ctx, astgen, interruptSet),
-        .kwWhile => _ = try whileRule(ctx, astgen),
-        .kwIf => _ = try ifRule(ctx, astgen),
+        .kwWhile => _ = try whileRule(ctx, astgen, interruptSet),
+        .kwIf => _ = try ifRule(ctx, astgen, interruptSet),
+        .semicolon => {
+            ctx.pushError(.expectedStatement);
+            advance(ctx);
+            return;
+        },
         else => _ = try expressionStatementRule(ctx, astgen, interruptSet),
     }
 }
 
-/// interruptSet should be either brace or EOF.
+/// interruptSet should be either brace or EOF or brace/eof/paren or eof/paren (for statements).
 fn expressionStatementRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
-    _ = expressionRule(ctx, astgen, .semicolon) catch |interrupt| {
-        if (isInterruptAtOrAbove(interrupt, interruptSet)) {
-            return interrupt;
-        } else if (isInterruptAtExact(interrupt, .semicolon)) {
-            advance(ctx);
-            return;
-        } else {
-            // the only case where this might happen is a brace interrupt while this has EOF interrupt as of now
-            _ = try filterCurrentToken(.semicolon, ctx, interruptSet);
-            advance(ctx);
-            return;
-        }
-    };
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })) or interruptSet.setEq(.init(.{ .eof, .parenthesis })) or interruptSet.setEq(.init(.{ .eof, .brace, .parenthesis })));
+
+    _ = try expressionRule(ctx, astgen, interruptSet);
 
     const sc = try filterCurrentToken(.semicolon, ctx, interruptSet);
     // if a semicolon ends the line, eg (1 + 2);, then advance as is the positional contract
@@ -813,6 +857,7 @@ fn expressionStatementRule(ctx: Context, astgen: *AST, interruptSet: InterruptLe
 /// The grammar expects this to process its own semicolon.
 /// Similar to expr statements, this can either be interrupted by braces or eof, so this accepts that parameter.
 fn returnRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
     const tracyZone = ztracy.ZoneN(@src(), "try parse return");
     defer tracyZone.End();
 
@@ -832,8 +877,9 @@ fn returnRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void
     // 3. return (expr) EOF - The following two cases are syntax errors.
     // 4. return EOF
 
-    if (peekOrInterrupt(ctx, .semicolon)) |_| {
-        const val = expressionRule(ctx, astgen, .semicolon) catch |e| {
+    const innerInterruptSet = interruptSet.setUnion(.init(.{.semicolon}));
+    if (peekOrInterrupt(ctx, innerInterruptSet)) |_| {
+        const val = expressionRule(ctx, astgen, innerInterruptSet) catch |e| {
             if (isInterruptAtExact(e, .semicolon)) {
                 // basically the same case 1, this rule doesn't care if the expression is malformed or not
                 advance(ctx);
@@ -847,6 +893,7 @@ fn returnRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void
         _ = astgen.newStatement(.{ .funReturn = val });
         // return (expr) ; <- case 1
         _ = try filterCurrentToken(.semicolon, ctx, interruptSet);
+        advance(ctx);
     } else |e| {
         if (isInterruptAtExact(e, .semicolon)) {
             // case 2
@@ -1137,8 +1184,10 @@ fn primaryRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) Pars
 
     const result = switch (tok.token.tokenType) {
         .leftParen => grouping: {
+            const innerInterruptSet = InterruptLevelSet.setUnion(interruptSet, .init(.{.parenthesis}));
+
             advance(ctx);
-            const expr = expressionRule(ctx, astgen, .parenthesis) catch |e| {
+            const expr = expressionRule(ctx, astgen, innerInterruptSet) catch |e| {
                 if (isInterruptAtExact(e, .parenthesis)) {
                     // ( 1 + )
                     // ------^ interrupt here
@@ -1150,7 +1199,7 @@ fn primaryRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) Pars
 
             // current will be the token following expr
             // the only other interrupt level above semicolon is right paren, which we don't want to interfere with our stuff
-            const endParen = peekOrInterrupt(ctx, .semicolon) catch |e| {
+            const endParen = peekOrInterrupt(ctx, interruptSet) catch |e| {
                 ctx.pushError(.{ .expectedToken = .{ .expected = .rightParen } });
                 return e;
             };
