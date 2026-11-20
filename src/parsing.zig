@@ -707,6 +707,71 @@ fn blockRule(ctx: Context, astgen: *AST) !StmtRange {
     return retInfo;
 }
 
+/// EOF or Brace.
+/// "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement
+fn forRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
+    assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
+
+    const tracyZone = ztracy.ZoneN(@src(), "parse for statement");
+    defer tracyZone.End();
+
+    const outerSemiInterrupt = interruptSet.setUnion(.init(.{.semicolon}));
+    const innerParenInterrupt = interruptSet.setUnion(.init(.{.parenthesis}));
+
+    // should not error but whatever
+    _ = try filterCurrentToken(.kwFor, ctx, interruptSet);
+    advance(ctx);
+
+    setup: {
+        _ = try filterCurrentToken(.leftParen, ctx, outerSemiInterrupt);
+        advance(ctx);
+
+        const firstStmt = try peekOrInterrupt(ctx, interruptSet);
+        _ = switch (firstStmt.token.tokenType) {
+            .semicolon => advance(ctx),
+            .kwVar => variableDeclarationRule(ctx, astgen, innerParenInterrupt),
+            else => expressionStatementRule(ctx, astgen, innerParenInterrupt),
+        } catch |e| {
+            if (isInterruptAtExact(e, .parenthesis)) {
+                advance(ctx);
+                break :setup;
+            } else {
+                return e;
+            }
+        };
+
+        const secondStmt = try peekOrInterrupt(ctx, interruptSet);
+        _ = switch (secondStmt.token.tokenType) {
+            .semicolon => advance(ctx),
+            else => expressionStatementRule(ctx, astgen, innerParenInterrupt),
+        } catch |e| {
+            if (isInterruptAtExact(e, .parenthesis)) {
+                advance(ctx);
+                break :setup;
+            } else {
+                return e;
+            }
+        };
+
+        const thirdStmt = try peekOrInterrupt(ctx, interruptSet);
+        _ = switch (thirdStmt.token.tokenType) {
+            .rightParen => NULL_HANDLE,
+            else => expressionRule(ctx, astgen, innerParenInterrupt),
+        } catch |e| err: {
+            if (isInterruptAtExact(e, .parenthesis)) {
+                break :err NULL_HANDLE;
+            } else {
+                return e;
+            }
+        };
+
+        _ = try filterCurrentToken(.rightParen, ctx, interruptSet);
+    }
+    advance(ctx);
+    // body!!
+    try statementRule(ctx, astgen, interruptSet);
+}
+
 /// the only case where a brace should interrupt this is "while }", but this must be accounted for nonetheless.
 fn whileRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
     assert(interruptSet.setEq(.init(.{.eof})) or interruptSet.setEq(.init(.{ .eof, .brace })));
@@ -829,6 +894,7 @@ fn statementRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) Pa
     switch (firstToken.token.tokenType) {
         .leftBrace => _ = try blockRule(ctx, astgen),
         .kwReturn => _ = try returnRule(ctx, astgen, interruptSet),
+        .kwFor => _ = try forRule(ctx, astgen, interruptSet),
         .kwWhile => _ = try whileRule(ctx, astgen, interruptSet),
         .kwIf => _ = try ifRule(ctx, astgen, interruptSet),
         .semicolon => {
