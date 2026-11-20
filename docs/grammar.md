@@ -25,7 +25,7 @@ status legend:
 | S | - | statement    | ( return \| exprStmt \| block \| ifStmt \| whileStmt \| forStmt ) | |
 | Y | - | block        | "{" ( declaration )\* "}" | |
 | Y | - | exprStmt     | expression ";" | |
-| N | N | forStmt      | "for" "(" ( varDecl \| exprStmt \| ";" ) expression? ";" expression? ")" statement | |
+| Y | N | forStmt      | "for" "(" ( varDecl \| exprStmt \| ";" ) expression? ";" expression? ")" statement | |
 | Y | Y | returnStmt   | "return" expression ";" | |
 | Y | N | whileStmt    | "while" "(" expression ")" statement | |
 | Y | N | ifStmt       | "if" "(" expression ")" statement ( "else" statement ) | |
