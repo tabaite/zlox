@@ -612,6 +612,13 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLe
                     break :e .nil;
                 },
             };
+            // hopefully optimized into the previous switch
+            _ = switch (typeToken.token.tokenType) {
+                .tyBool, .tyNum, .tyString, .tyVoid => {
+                    ctx.pushWarning(.typesDeprecated);
+                },
+                else => {},
+            };
 
             advance(ctx);
 
@@ -654,9 +661,14 @@ fn variableDeclarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLe
             });
         },
         .semicolon => {
-            // var foo; - this is technically allowed but we're stripping out types l8r
+            // var foo; - this is allowed
             // -------^
-            ctx.pushError(.expectedTypeAnnotation);
+            _ = astgen.newStatement(.{
+                .declaration = .{
+                    .name = iter.exchangeTokenForSource(nameToken.token),
+                    .val = astgen.newExpression(.{ .literal = .nil }),
+                },
+            });
             advance(ctx);
         },
         else => {
