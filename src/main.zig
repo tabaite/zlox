@@ -14,6 +14,7 @@ const errors = lib.errors;
 const context = lib.context;
 const ErrorLog = errors.ErrorLog;
 const ErrorTrace = errors.ErrorTrace;
+const ErrorLocation = errors.ErrorLocation;
 
 const Context = context.Context;
 
@@ -107,6 +108,7 @@ pub fn main(initData: std.process.Init) !void {
     defer gpa.free(contents);
 
     if (pipeline.maxStage.asInt() < ProgramStage.tokenize.asInt()) {
+        // no tokenization warnings exist :)
         return;
     }
 
@@ -120,7 +122,9 @@ pub fn main(initData: std.process.Init) !void {
 
     defer errLog.deinit(astAlloc);
 
-    if (try tryPrintErrors(ctx, stderr)) {
+    if (errorsEncountered(ctx)) {
+        try printErrors(ctx, stderr);
+        try printWarnings(ctx, stderr);
         return;
     }
     if (pipeline.printTokens) {
@@ -143,6 +147,7 @@ pub fn main(initData: std.process.Init) !void {
         }
     }
     if (pipeline.maxStage.asInt() < ProgramStage.parse.asInt()) {
+        try printWarnings(ctx, stderr);
         return;
     }
 
@@ -151,44 +156,74 @@ pub fn main(initData: std.process.Init) !void {
 
     parsing.parseAndCompileAll(ctx, &astgen);
 
-    if (try tryPrintErrors(ctx, stderr)) {
+    if (errorsEncountered(ctx)) {
+        try printErrors(ctx, stderr);
+        try printWarnings(ctx, stderr);
         return;
     }
     if (pipeline.printInstructions) {
         _ = try ast.printAST(&astgen, stderr);
     }
     if (pipeline.maxStage.asInt() < ProgramStage.evaluate.asInt()) {
+        try printWarnings(ctx, stderr);
         return;
     }
 
     _ = try stderr.write("program execution currently not supported due to ast refactoring\n");
 }
 
-fn tryPrintErrors(ctx: Context, stderr: *Io.Writer) !bool {
+fn errorsEncountered(ctx: Context) bool {
+    return if (ctx.log.recover()) |_| true else false;
+}
+
+fn printErrors(ctx: Context, stderr: *Io.Writer) !void {
     const log = ctx.log;
     const errsOrNull = log.recover();
     if (errsOrNull) |errs| {
-        const tryPrintErrorZone = ztracy.ZoneN(@src(), "print compilation errors");
+        const tryPrintErrorZone = ztracy.ZoneN(@src(), "print compilation warnings");
         defer tryPrintErrorZone.End();
+        defer stderr.flush() catch {
+            // whatever man
+        };
 
         try stderr.print("found {d} compilation errors:\n", .{errs.len});
         for (errs) |trace| {
-            try handleErrorTrace(trace, ctx, stderr);
+            try printTraceHeader("error", "31;1m", trace.where, trace.lineNumber, ctx, stderr);
+            try trace.printSelf(stderr);
+            _ = try stderr.write("\n\n");
         }
-        return true;
-    } else {
-        return false;
     }
 }
 
-fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
+fn printWarnings(ctx: Context, stderr: *Io.Writer) !void {
+    const log = ctx.log;
+    const warnsOrNull = log.recoverWarns();
+    if (warnsOrNull) |warns| {
+        const tryPrintErrorZone = ztracy.ZoneN(@src(), "print compilation warnings");
+        defer tryPrintErrorZone.End();
+        defer stderr.flush() catch {
+            // whatever man
+        };
+
+        try stderr.print("found {d} compilation warnings:\n", .{warns.len});
+        for (warns) |trace| {
+            try printTraceHeader("warning", "33;1m", trace.where, trace.lineNumber, ctx, stderr);
+            try trace.printSelf(stderr);
+        }
+    }
+}
+
+/// NONFLUSHING
+/// red: 31;1m
+/// yellow: 33;1m
+fn printTraceHeader(label: []const u8, colorCode: []const u8, location: ErrorLocation, lineNumber: u32, ctx: Context, writer: *Io.Writer) !void {
     const handleTraceZone = ztracy.ZoneN(@src(), "print error trace");
     defer handleTraceZone.End();
 
     const iter = ctx.tokenIterator;
 
     const line: []u8, const hlOffset, const hlLen = a: {
-        switch (trace.where) {
+        switch (location) {
             .token => |t| {
                 const whereSrc = iter.exchangeTokenForSource(t.t);
                 const tok = t.t;
@@ -215,10 +250,10 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
 
     // 4_294_967_295
     var intParseBuffer: [11]u8 = undefined;
-    const intParsedLen = std.fmt.printInt(&intParseBuffer, trace.lineNumber, 10, .upper, .{});
+    const intParsedLen = std.fmt.printInt(&intParseBuffer, lineNumber, 10, .upper, .{});
 
-    try writer.print("error:\n{s}: {s}\x1b[31;1m{s}\x1b[0m{s}\n", .{ intParseBuffer[0..intParsedLen], lineBeforeHl, lineHl, lineAfterHl });
-    _ = try writer.write("\x1b[31;1m");
+    try writer.print("{s}:\n{s}: {s}\x1b[{s}{s}\x1b[0m{s}\n", .{ label, intParseBuffer[0..intParsedLen], lineBeforeHl, colorCode, lineHl, lineAfterHl });
+    try writer.print("\x1b[{s}", .{colorCode});
     // the two extra characters are the colon + space
     for (0..hlOffset + intParsedLen + 2) |_| {
         try writer.writeByte('-');
@@ -227,8 +262,4 @@ fn handleErrorTrace(trace: ErrorTrace, ctx: Context, writer: *Io.Writer) !void {
         try writer.writeByte('^');
     }
     _ = try writer.write("\x1b[0m\n");
-
-    try trace.printSelf(writer);
-    _ = try writer.write("\n\n");
-    try writer.flush();
 }
