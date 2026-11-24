@@ -173,10 +173,10 @@ pub const WarningTrace = struct {
             // errors using sourceRange do not print location generally
             .sourceRange => @constCast(""),
         };
-        defer out.flush();
+        defer out.flush() catch {};
 
         switch (self.warn) {
-            .typesDeprecated => try out.write("type annotations are now deprecated and WILL NOT BE CHECKED EVER"),
+            .typesDeprecated => _ = try out.write("type annotations are now deprecated and WILL NOT BE CHECKED EVER"),
         }
     }
 };
@@ -305,6 +305,16 @@ pub const ErrorLog = struct {
             return null;
         } else {
             return self.errBacking[0..self.errUsed];
+        }
+    }
+    pub fn recoverWarns(self: ErrorLog) ?[]WarningTrace {
+        const parseZone = ztracy.ZoneN(@src(), "recover error information");
+        defer parseZone.End();
+
+        if (self.warnUsed == 0) {
+            return null;
+        } else {
+            return self.warnBacking[0..self.warnUsed];
         }
     }
 };
