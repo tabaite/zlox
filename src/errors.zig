@@ -25,6 +25,14 @@ pub const ErrorLocation = union(enum) {
     },
 };
 
+pub const Warning = union(enum) {
+    /// Trying to twist a dynamically typed language into a statically typed one
+    /// with no knowledge of type systems was a mistake. Save me!
+    /// fun foo(arg: number)
+    ///              ^^^^^^--- warn: types are deprecated and this type annotation will not be respected
+    typesDeprecated,
+};
+
 pub const Error = union(enum) {
     // SCANNING ERRORS
     /// When we can't recognize.
@@ -152,6 +160,27 @@ pub const Error = union(enum) {
     functionAlreadyDefined: struct { name: []u8 },
 };
 
+pub const WarningTrace = struct {
+    warn: Warning,
+    // null means EOF
+    where: ErrorLocation,
+    lineNumber: u32,
+
+    pub fn printSelf(self: @This(), out: *std.Io.Writer) !void {
+        _ = switch (self.where) {
+            .eof => @constCast("end of file"),
+            .token => |t| @constCast(t.t.tokenType.typeAsString()),
+            // errors using sourceRange do not print location generally
+            .sourceRange => @constCast(""),
+        };
+        defer out.flush();
+
+        switch (self.warn) {
+            .typesDeprecated => try out.write("type annotations are now deprecated and WILL NOT BE CHECKED EVER"),
+        }
+    }
+};
+
 pub const ErrorTrace = struct {
     err: Error,
     // null means EOF
@@ -207,20 +236,33 @@ pub const ErrorTrace = struct {
 
 pub const ErrorLog = struct {
     const BACKINGSIZE = 32767;
-    backing: []ErrorTrace,
-    used: usize,
+    errBacking: []ErrorTrace,
+    errUsed: usize,
+    warnBacking: []WarningTrace,
+    warnUsed: usize,
 
     pub fn init(allocator: Allocator) !ErrorLog {
         const parseZone = ztracy.ZoneN(@src(), "init error log");
         defer parseZone.End();
 
         return .{
-            .backing = try allocator.alloc(ErrorTrace, BACKINGSIZE),
-            .used = 0,
+            .errBacking = try allocator.alloc(ErrorTrace, BACKINGSIZE),
+            .errUsed = 0,
+            .warnBacking = try allocator.alloc(ErrorTrace, BACKINGSIZE),
+            .warnUsed = 0,
         };
     }
     pub fn deinit(self: *ErrorLog, allocator: Allocator) void {
-        allocator.free(self.backing);
+        allocator.free(self.errBacking);
+    }
+
+    pub fn pushWarn(self: *ErrorLog, warn: Warning, context: TokenContext) void {
+        const parseZone = ztracy.ZoneN(@src(), "push error to error log");
+        defer parseZone.End();
+
+        const trace: WarningTrace = .{ .warn = warn, .where = if (context.token.tokenType != .eof) .{ .token = .{ .t = context.token } } else .eof, .lineNumber = context.lineNumber };
+        self.warnBacking[self.warnUsed] = trace;
+        self.warnUsed += 1;
     }
 
     pub fn push(self: *ErrorLog, err: Error, context: TokenContext) void {
@@ -228,8 +270,8 @@ pub const ErrorLog = struct {
         defer parseZone.End();
 
         const trace: ErrorTrace = .{ .err = err, .where = if (context.token.tokenType != .eof) .{ .token = .{ .t = context.token } } else .eof, .lineNumber = context.lineNumber };
-        self.backing[self.used] = trace;
-        self.used += 1;
+        self.errBacking[self.errUsed] = trace;
+        self.errUsed += 1;
     }
 
     pub fn pushTokenRange(self: *ErrorLog, err: Error, start: TokenContext, endInclusive: TokenContext) void {
@@ -240,8 +282,8 @@ pub const ErrorLog = struct {
         const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
         const rangeEnd = if (endInclusive.token) |t| t.sourceEndExclusive else u32Max;
         const trace: ErrorTrace = .{ .err = err, .where = .{ .sourceRange = .{ .start = rangeStart, .endPossiblyOOB = rangeEnd } }, .lineNumber = start.lineNumber };
-        self.backing[self.used] = trace;
-        self.used += 1;
+        self.errBacking[self.errUsed] = trace;
+        self.errUsed += 1;
     }
     pub fn pushTokenRangeEndExlusive(self: *ErrorLog, err: Error, start: TokenContext, endExclusive: TokenContext) void {
         const parseZone = ztracy.ZoneN(@src(), "push error to error log");
@@ -251,18 +293,18 @@ pub const ErrorLog = struct {
         const rangeStart = if (start.token) |t| t.sourceStart else u32Max;
         const rangeEnd = if (endExclusive.token) |t| t.sourceStart else u32Max;
         const trace: ErrorTrace = .{ .err = err, .where = .{ .sourceRange = .{ .start = rangeStart, .endPossiblyOOB = rangeEnd } }, .lineNumber = start.lineNumber };
-        self.backing[self.used] = trace;
-        self.used += 1;
+        self.errBacking[self.errUsed] = trace;
+        self.errUsed += 1;
     }
 
     pub fn recover(self: ErrorLog) ?[]ErrorTrace {
         const parseZone = ztracy.ZoneN(@src(), "recover error information");
         defer parseZone.End();
 
-        if (self.used == 0) {
+        if (self.errUsed == 0) {
             return null;
         } else {
-            return self.backing[0..self.used];
+            return self.errBacking[0..self.errUsed];
         }
     }
 };
