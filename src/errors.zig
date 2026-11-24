@@ -248,7 +248,7 @@ pub const ErrorLog = struct {
         return .{
             .errBacking = try allocator.alloc(ErrorTrace, BACKINGSIZE),
             .errUsed = 0,
-            .warnBacking = try allocator.alloc(ErrorTrace, BACKINGSIZE),
+            .warnBacking = try allocator.alloc(WarningTrace, BACKINGSIZE),
             .warnUsed = 0,
         };
     }
