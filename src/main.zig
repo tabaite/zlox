@@ -209,6 +209,7 @@ fn printWarnings(ctx: Context, stderr: *Io.Writer) !void {
         for (warns) |trace| {
             try printTraceHeader("warning", "33;1m", trace.where, trace.lineNumber, ctx, stderr);
             try trace.printSelf(stderr);
+            _ = try stderr.write("\n\n");
         }
     }
 }
