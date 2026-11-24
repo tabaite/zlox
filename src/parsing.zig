@@ -392,7 +392,7 @@ fn declarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) 
 /// b) function declarations aren't in any statement rules either so semicolons never apply
 fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
     // as explained in doc comment, braces are consumed by the calling rule, so it doesn't interrupt this
-    const irptSet = InterruptLevelSet.init(.{.eof});
+    const eofIrptSet = InterruptLevelSet.init(.{.eof});
 
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
@@ -401,12 +401,12 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 
     // fun foo ...
     // ^^^-^^^- first two
-    _ = try filterCurrentToken(.kwFun, ctx, irptSet);
+    _ = try filterCurrentToken(.kwFun, ctx, eofIrptSet);
     advance(ctx);
-    const funName = try filterCurrentToken(.identifier, ctx, irptSet);
+    const funName = try filterCurrentToken(.identifier, ctx, eofIrptSet);
     advance(ctx);
 
-    _ = try filterCurrentToken(.leftParen, ctx, irptSet);
+    _ = try filterCurrentToken(.leftParen, ctx, eofIrptSet);
     advance(ctx);
 
     var args: [MAX_ARGS][]u8 = undefined;
@@ -415,76 +415,78 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
     // if EOF, main ( EOF,
     // skip parsing arguments
     // should be fine to implement this hack
-    const argStart = try peekOrInterrupt(ctx, irptSet);
+    const argStart = try peekOrInterrupt(ctx, eofIrptSet);
     // fun foo ( ...
     // --------^
-    if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, irptSet)) |_| {
-        const argName = try filterCurrentToken(.identifier, ctx, irptSet);
+    if (argStart.token.tokenType != .rightParen) processArgs: while (peekOrInterrupt(ctx, eofIrptSet)) |_| {
+        const argName = try filterCurrentToken(.identifier, ctx, eofIrptSet);
         // fun foo ( name ...
         // ----------^^^^
 
         advance(ctx);
-        const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, irptSet);
-        if (typeDesignatorOrInterrupt) |typeDesignatorCtx| {
-            const typeDesignator = typeDesignatorCtx.token;
-            switch (typeDesignator.tokenType) {
-                .comma => {
-                    // ----------vvvv WHERE TYPE
-                    // fun foo ( name, x ...
-                    // --------------^ cursor position
-                    // (DEPRECATE TYPES PLS)
-                    ctx.pushError(.expectedTypeAnnotation);
-                },
+        const typeDesignatorOrInterrupt = peekOrInterrupt(ctx, eofIrptSet);
+        if (typeDesignatorOrInterrupt) |typeDesignatorCtx| switch (typeDesignatorCtx.token.tokenType) {
+            .comma, .rightParen => {
+                // fun foo ( name, x ...
+                // --------------^
+                // OR
+                // fun foo ( name ) ...
+                // ---------------^
+                // both of these cases are handled by the following switch
 
-                .colon => {
-                    // fun foo ( name : number ...
-                    // ---------------^ (spaces for dramatic effect)
-                    advance(ctx);
-                    const argTypeOrInterrupt = peekOrInterrupt(ctx, irptSet);
-                    if (argTypeOrInterrupt) |argType| {
-                        // fun foo ( name : <argType> ...
-                        // ------------------^^^^^^^ yeah
-                        switch (argType.token.tokenType) {
-                            .tyNum, .tyBool, .tyString, .identifier => {
-                                advance(ctx);
-                            },
-                            .tyVoid => {
-                                ctx.pushError(.argumentTypeCannotBeVoid);
-                                advance(ctx);
-                            },
-                            .comma => {
-                                // -----------------v DO NOT ADVANCE
-                                // fun foo ( name : , ...
-                                ctx.pushError(.expectedTypeToken);
-                            },
-                            else => {
-                                ctx.pushError(.expectedTypeToken);
-                                advance(ctx);
-                            },
-                        }
+                args[argCount] = iter.exchangeTokenForSource(argName);
+            },
 
-                        args[argCount] = iter.exchangeTokenForSource(argName);
-                    } else |err| {
-                        // fun foo ( name : EOF ...
-                        // -----------------^^^ (huh?)
-                        ctx.pushError(.expectedTypeToken);
-                        return err;
+            .colon => {
+                // fun foo ( name : number ...
+                // ---------------^ (spaces for dramatic effect)
+                advance(ctx);
+                const argTypeOrInterrupt = peekOrInterrupt(ctx, eofIrptSet);
+                if (argTypeOrInterrupt) |argType| {
+                    // fun foo ( name : <argType> ...
+                    // ------------------^^^^^^^ yeah
+                    switch (argType.token.tokenType) {
+                        .tyNum, .tyBool, .tyString, .identifier => {
+                            ctx.pushWarning(.typesDeprecated);
+                            advance(ctx);
+                        },
+                        .tyVoid => {
+                            ctx.pushWarning(.typesDeprecated);
+                            ctx.pushError(.argumentTypeCannotBeVoid);
+                            advance(ctx);
+                        },
+                        .comma => {
+                            // -----------------v DO NOT ADVANCE
+                            // fun foo ( name : , ...
+                            ctx.pushError(.expectedTypeToken);
+                        },
+                        else => {
+                            ctx.pushError(.expectedTypeToken);
+                            advance(ctx);
+                        },
                     }
-                },
 
-                else => {
-                    // fun foo ( name . ...
-                    // ---------------^ (huh?)
-                    // this shouldn't be a super common error, but the main case we consider is
-                    // fun foo ( name. name2, name3 ), where we mistype this character for a comma
-                    ctx.pushError(.expectedTypeAnnotation);
-                },
-            }
+                    args[argCount] = iter.exchangeTokenForSource(argName);
+                } else |err| {
+                    // fun foo ( name : EOF ...
+                    // -----------------^^^ (huh?)
+                    ctx.pushError(.expectedTypeToken);
+                    return err;
+                }
+            },
+
+            else => {
+                // fun foo ( name . ...
+                // ---------------^ (huh?)
+                // this shouldn't be a super common error, but the main case we consider is
+                // fun foo ( name. name2, name3 ), where we mistype this character for a comma
+                ctx.pushError(.expectedTypeAnnotation);
+            },
         } else |_| {
             // fun foo ( name EOF
         }
 
-        const continuationOrInterrupt = peekOrInterrupt(ctx, irptSet);
+        const continuationOrInterrupt = peekOrInterrupt(ctx, eofIrptSet);
         if (continuationOrInterrupt) |continuation| {
             switch (continuation.token.tokenType) {
                 .rightParen => {
@@ -525,26 +527,27 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
 
     // fun foo ( name, ..., nameN )
     // ---------------------------^ we need this end here
-    _ = try filterCurrentToken(.rightParen, ctx, irptSet);
+    _ = try filterCurrentToken(.rightParen, ctx, eofIrptSet);
     advance(ctx);
 
     // fun foo ( name ) returnType ...
     // -----------------^^^^^^^^^^
-    const returnTypeTokenOrNull = peekOrInterrupt(ctx, irptSet) catch |e| {
+    const returnTypeTokenOrNull = peekOrInterrupt(ctx, eofIrptSet) catch |e| {
         ctx.pushError(.expectedTypeToken);
         return e;
     };
     switch (returnTypeTokenOrNull.token.tokenType) {
         .tyBool, .tyNum, .tyString, .tyVoid => {
+            ctx.pushWarning(.typesDeprecated);
             advance(ctx);
         },
-        // Start of function body. We assume this means void.
+        // Start of function body.
         // -----------v
         // fun foo () { ... }
         .leftBrace => {},
         else => {
             advance(ctx);
-            ctx.pushError(.expectedTypeToken);
+            ctx.pushError(.{ .expectedToken = .{ .expected = .leftBrace } });
         },
     }
 
