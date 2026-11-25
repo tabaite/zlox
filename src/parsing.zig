@@ -377,11 +377,68 @@ fn declarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) 
     switch (first.token.tokenType) {
         .kwVar => try variableDeclarationRule(ctx, astgen, interruptSet),
         .kwFun => try functionDeclarationRule(ctx, astgen),
+        .kwClass => try classDeclarationRule(ctx, astgen, interruptSet),
         // this means that
         // a) there are calls and such allowed at the top of files
         // b) you can literally define a new class INSIDE a function and whatnot
         else => try statementRule(ctx, astgen, interruptSet),
     }
+}
+
+/// actually we need the argument for "class" IDENTIFIER ("<" IDENTIFER) "{"
+/// (the parts where we cannot consume a "}" as our own)
+fn classDeclarationRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !void {
+    const innerIrptSet = InterruptLevelSet.init(.{ .eof, .brace });
+
+    _ = try filterCurrentToken(.kwClass, ctx, interruptSet);
+    advance(ctx);
+
+    _ = try filterCurrentToken(.identifier, ctx, interruptSet);
+    advance(ctx);
+
+    // ( "<" IDENTIFIER )? "{"
+    checkInheritance: {
+        const inheritanceTrigger = try peekOrInterrupt(ctx, interruptSet);
+
+        switch (inheritanceTrigger.token.tokenType) {
+            .rightBrace => break :checkInheritance,
+            .less => {
+                advance(ctx);
+
+                const parentClassIden = try peekOrInterrupt(ctx, interruptSet);
+                if (parentClassIden.token.tokenType != .identifier) {
+                    break :checkInheritance;
+                }
+
+                // TODO: expand this stuff
+
+                // ... use it and stuff
+                advance(ctx);
+            },
+            else => break :checkInheritance,
+        }
+    }
+
+    _ = try filterCurrentToken(.leftBrace, ctx, interruptSet);
+    advance(ctx);
+
+    // PAST THIS POINT LEFT BRACE INTERRUPTS ARE EAGERLY CONSUMED AS OUR OWN
+
+    while (peekOrInterrupt(ctx, innerIrptSet)) |tok| {
+        switch (tok.token.tokenType) {
+            .rightBrace => break,
+            .identifier => try functionRule(ctx, astgen),
+            else => {
+                ctx.pushError(.expectedStatement);
+                advance(ctx);
+            },
+        }
+        if (tok.token.tokenType == .rightBrace) {
+            break;
+        }
+    } else |_| {}
+    _ = try filterCurrentToken(.rightBrace, ctx, .init(.{.eof}));
+    advance(ctx);
 }
 
 /// This doesn't accept an interruptSet parameter because it
@@ -397,12 +454,31 @@ fn functionDeclarationRule(ctx: Context, astgen: *AST) !void {
     const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
     defer tracyZone.End();
 
-    const iter = ctx.tokenIterator;
-
     // fun foo ...
-    // ^^^-^^^- first two
+    // ^^^-^^^- should b first two
     _ = try filterCurrentToken(.kwFun, ctx, eofIrptSet);
     advance(ctx);
+
+    try functionRule(ctx, astgen);
+}
+
+/// This doesn't accept an interruptSet parameter because it
+/// would be really weird for this to have an interrupt level greater than eof
+/// (as any early ending brace should eagerly be consumed as its own).
+/// as for the others,
+/// a) there's no rule where a function declaration is inside parenthesis
+/// b) function declarations aren't in any statement rules either so semicolons never apply
+fn functionRule(ctx: Context, astgen: *AST) !void {
+    // as explained in doc comment, braces are consumed by the calling rule, so it doesn't interrupt this
+    const eofIrptSet = InterruptLevelSet.init(.{.eof});
+
+    const tracyZone = ztracy.ZoneN(@src(), "parse function declaration");
+    defer tracyZone.End();
+
+    const iter = ctx.tokenIterator;
+
+    //... foo ...
+    // ---^^^- should b first
     const funName = try filterCurrentToken(.identifier, ctx, eofIrptSet);
     advance(ctx);
 

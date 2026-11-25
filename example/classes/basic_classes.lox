@@ -1,0 +1,6 @@
+class Foo {
+    area() {
+        var pi = 3.1459265;
+        return pi * radius;
+    }
+}
