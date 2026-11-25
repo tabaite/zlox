@@ -1,0 +1,8 @@
+fun main() {
+    "67 67".asInt();
+    123091841.kill();
+
+    var yeah = Some(3.14);
+
+    yeah.map(closure).flatten.unwrap_or(3);
+}

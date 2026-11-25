@@ -1074,6 +1074,7 @@ fn expressionRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) P
     return try assignmentRule(ctx, astgen, interruptSet);
 }
 
+// PRIORITY TODO: implement the adjusted grammar
 fn assignmentRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) !ExprHandle {
     const tracyZone = ztracy.ZoneN(@src(), "try parse assignment or fallthrough");
     defer tracyZone.End();
@@ -1198,126 +1199,124 @@ fn unaryRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) ParseI
 /// Head is on the token after the primary.
 /// 1 ...
 /// ---^ head position
+///
+/// note: as per the grammar specification, method chaining is possible :)
+/// but this is also "legal": foo()()()()
 fn functionCallOrVariableRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) ParseInterruptSignal!ExprHandle {
     const iter = ctx.tokenIterator;
 
+    const tracyZone = ztracy.ZoneN(@src(), "try parse call/dot notation (fallthrough to primary)");
+    defer tracyZone.End();
+
     const nameCtx = peekOrInterrupt(ctx, interruptSet) catch return primaryRule(ctx, astgen, interruptSet);
-    const nameToken = nameCtx.token;
 
-    if (nameToken.tokenType != .identifier and nameToken.tokenType != .kwPrint) {
-        return primaryRule(ctx, astgen, interruptSet);
-    }
-    advance(ctx);
-    const startParen = peekOrInterrupt(ctx, interruptSet) catch {
-        // same as variable
-        const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
-        defer tracyZone.End();
+    // TODO: use later!
+    _ = try primaryRule(ctx, astgen, interruptSet);
 
-        return astgen.newExpression(.{ .variable = iter.exchangeTokenForSource(nameCtx.token) });
-    };
-
-    if (startParen.token.tokenType == .leftParen) {
-        const tracyZone = ztracy.ZoneN(@src(), "try parse function call");
-        defer tracyZone.End();
-
-        // Function call:
-        // IDENTIFIER "(" ( expression "," )* expression? ")"
-        //
-        // Handled malformed inputs:
-        // Statement end before closing parenthesis
-        // foo(; - expected right paren,found semicolon
-        //
-        // Missing comma
-        // foo(a b)
-        // ------^ expected comma, found expression
-        //
-        // TODO:
-        // Interrupted argument
-        // foo(1 + )
-        // --------^ interrupt
-        advance(ctx);
-        var args: [MAX_ARGS]ExprHandle = undefined;
-        var argNums: usize = 0;
-
-        // crazy nesting lol
-        arguments: {
-            const firstArg = peekOrInterrupt(ctx, interruptSet) catch break :arguments;
-            if (firstArg.token.tokenType == .rightParen) {
-                break :arguments;
-            }
-
-            while (peekOrInterrupt(ctx, interruptSet)) |t| {
-                if (t.token.tokenType == .rightParen) {
-                    // this path is only taken if we advance
-                    // from a comma specifying another argument,
-                    // and we encounter the right paren instead
-                    ctx.log.push(.expectedExpression, t);
-                    break;
-                }
-
-                const argExpr = try expressionRule(ctx, astgen, interruptSet);
-                if (argNums < MAX_ARGS) {
-                    args[argNums] = argExpr;
-                } else {
-                    ctx.pushError(.argLimitExceeded);
-                }
-                argNums += 1;
-
-                const continuation = peekOrInterrupt(ctx, interruptSet) catch |e| {
-                    if (isInterruptAtExact(e, .parenthesis)) {
-                        // call (1 + )
-                        // ----------^ interrupt
-                        advance(ctx);
-                        return NULL_HANDLE;
-                    }
-                    _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch return NULL_HANDLE;
-                    return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
-                };
-                switch (continuation.token.tokenType) {
-                    .comma => {
-                        advance(ctx);
-                    },
-                    .rightParen => break,
-                    // If it's unrecognized, then we treat it as if it were
-                    // the start of the next argument (we assume they forgot the comma).
-                    else => {
-                        // hacky but it works
-                        _ = filterCurrentToken(.comma, ctx, interruptSet) catch {};
-                    },
-                }
-            } else |_| {}
-        }
-
-        // Ending right parenthesis. If an interrupt occured (semicolon or EOF), do not advance
-        // as the statement will want to use the current token.
-        const end = peekOrInterrupt(ctx, interruptSet);
-        if (end) |t| {
+    while (peekOrInterrupt(ctx, interruptSet)) |start| {
+        if (start.token.tokenType == .leftParen) {
+            // Function call:
+            // IDENTIFIER "(" ( expression "," )* expression? ")"
+            //
+            // Handled malformed inputs:
+            // Statement end before closing parenthesis
+            // foo(; - expected right paren,found semicolon
+            //
+            // Missing comma
+            // foo(a b)
+            // ------^ expected comma, found expression
+            //
+            // TODO:
+            // Interrupted argument
+            // foo(1 + )
+            // --------^ interrupt
             advance(ctx);
-            if (t.token.tokenType == .rightParen) {
-                return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
-            } else {
-                _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch {};
-                return NULL_HANDLE;
+            var args: [MAX_ARGS]ExprHandle = undefined;
+            var argNums: usize = 0;
+
+            // crazy nesting lol
+            arguments: {
+                const firstArg = peekOrInterrupt(ctx, interruptSet) catch break :arguments;
+                if (firstArg.token.tokenType == .rightParen) {
+                    break :arguments;
+                }
+
+                while (peekOrInterrupt(ctx, interruptSet)) |t| {
+                    if (t.token.tokenType == .rightParen) {
+                        // this path is only taken if we advance
+                        // from a comma specifying another argument,
+                        // and we encounter the right paren instead
+                        ctx.log.push(.expectedExpression, t);
+                        break;
+                    }
+
+                    const argExpr = try expressionRule(ctx, astgen, interruptSet);
+                    if (argNums < MAX_ARGS) {
+                        args[argNums] = argExpr;
+                    } else {
+                        ctx.pushError(.argLimitExceeded);
+                    }
+                    argNums += 1;
+
+                    const continuation = peekOrInterrupt(ctx, interruptSet) catch |e| {
+                        if (isInterruptAtExact(e, .parenthesis)) {
+                            // call (1 + )
+                            // ----------^ interrupt
+                            advance(ctx);
+                            return NULL_HANDLE;
+                        }
+                        _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch return NULL_HANDLE;
+                        return astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
+                    };
+                    switch (continuation.token.tokenType) {
+                        .comma => {
+                            advance(ctx);
+                        },
+                        .rightParen => break,
+                        // If it's unrecognized, then we treat it as if it were
+                        // the start of the next argument (we assume they forgot the comma).
+                        else => {
+                            // hacky but it works
+                            _ = filterCurrentToken(.comma, ctx, interruptSet) catch {};
+                        },
+                    }
+                } else |_| {}
             }
-        } else |_| {
-            _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch {};
-            return NULL_HANDLE;
+
+            // Ending right parenthesis. If an interrupt occured (semicolon or EOF), do not advance
+            // as the statement will want to use the current token.
+            const end = peekOrInterrupt(ctx, interruptSet);
+            if (end) |t| {
+                advance(ctx);
+                // TODO: fix!!!
+                if (t.token.tokenType == .rightParen) {
+                    _ = astgen.newFunctionCall(iter.exchangeTokenForSource(nameCtx.token), args[0..argNums]);
+                } else {
+                    _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch {};
+                    _ = NULL_HANDLE;
+                }
+            } else |_| {
+                // TODO: FIX AS WELL!!!!
+                _ = filterCurrentToken(.rightParen, ctx, interruptSet) catch {};
+                _ = NULL_HANDLE;
+            }
+        } else if (start.token.tokenType == .dot) {
+            advance(ctx);
+
+            const fieldName = peekOrInterrupt(ctx, interruptSet) catch break;
+            if (fieldName.token.tokenType != .identifier) {
+                // IDEN "." ...
+                // ------^
+                ctx.pushError(.{ .expectedToken = .{ .expected = .identifier } S);
+                break;
+            }
+            advance(ctx);
+        } else {
+            // remember that other stuff comes after this!
+            break;
         }
-    } else if (startParen.token.tokenType == .equal) {
-        const tracyZone = ztracy.ZoneN(@src(), "try parse (invalid) assignment");
-        defer tracyZone.End();
-
-        advance(ctx);
-
-        _ = try expressionRule(ctx, astgen, interruptSet);
-        ctx.log.push(.assignmentIsNotValidExpression, iter.peek(ctx.log));
-        return NULL_HANDLE;
-    } else {
-        const tracyZone = ztracy.ZoneN(@src(), "try parse variable");
-        defer tracyZone.End();
-
-        return astgen.newExpression(.{ .variable = iter.exchangeTokenForSource(nameCtx.token) });
-    }
+    } else |_| {}
+    return astgen.newExpression(.{ .variable = iter.exchangeTokenForSource(nameCtx.token) });
 }
 
 /// RULE POSITIONAL CONTRACT:
@@ -1371,6 +1370,8 @@ fn primaryRule(ctx: Context, astgen: *AST, interruptSet: InterruptLevelSet) Pars
         .kwNil => astgen.newExpression(.{ .literal = .nil }),
         .kwTrue => astgen.newExpression(.{ .literal = .true }),
         .kwFalse => astgen.newExpression(.{ .literal = .false }),
+        // TODO: process this!!!!!!
+        .identifier => NULL_HANDLE,
         else => {
             // Since this is the last rule checked, a rejection means there's no expression.
             // If we're calling the expression rules, we definitely need one.
