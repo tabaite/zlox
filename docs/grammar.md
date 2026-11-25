@@ -20,8 +20,8 @@ status legend:
 | N | N | classDecl    | "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" | |
 | S | S | funDecl      | "fun" function | the splitting of the funDecl and function rules has not occurred yet as i am not yet working on classes |
 | S | S | function     | IDENTIFIER "(" parameters? ")" ( type )? block | see funDecl. also return type is not vanilla |
-| S | - | parameters   | IDENTIFIER ":" type ("," IDENTIFIER ":" type)\* | types are really weird, they have not been updated to be optional (for language compliance) yet. |
-| Y | Y | varDecl      | "var" IDENTIFIER ( ":" type )? ( "=" expression )? ";" | |
+| S | - | parameters   | IDENTIFIER ":" type ("," IDENTIFIER)\* | types are really weird, they have not been updated to be optional (for language compliance) yet. |
+| Y | Y | varDecl      | "var" IDENTIFIER ( "=" expression )? ";" | |
 | S | - | statement    | ( return \| exprStmt \| block \| ifStmt \| whileStmt \| forStmt ) | |
 | Y | - | block        | "{" ( declaration )\* "}" | |
 | Y | - | exprStmt     | expression ";" | |
@@ -41,4 +41,3 @@ status legend:
 | Y | Y | call         | IDENTIFIER "(" arguments ")" | i think it's done for now..? there is a basic callstack implementation |
 | Y | Y | arguments    | expression ( "," expression )\* | |
 | Y | Y | primary      | NUMBER \| STRING \| "true" \| "false" \| "nil" \| "(" expression ")" \| IDENTIFIER | |
-| S | S | type         | IDENTIFIER \| "number" \| "bool" \| "string" \| "void" | not vanilla lox, may be depreciated. the IDENTIFIER type (user defined classes) is not implemented. |
